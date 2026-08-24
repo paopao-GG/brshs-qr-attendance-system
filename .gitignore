@@ -1,0 +1,27 @@
+# Secrets — never commit
+.env
+
+# Data
+*.db
+*.db-wal
+*.db-shm
+data/
+backups/
+media/photos/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# OS / editor / agent
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/
+.claude/

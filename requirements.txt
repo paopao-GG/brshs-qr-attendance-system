@@ -1,0 +1,21 @@
+# UI
+PySide6>=6.8            # LGPL binding. aarch64 wheel needs glibc >= 2.39 (Pi OS Trixie)
+qtpy>=2.4               # binding abstraction so PySide6/PyQt6 is a config change
+
+# SMS + QR
+httpx>=0.27
+qrcode[pil]>=7.4
+Pillow>=10.0
+
+# Webcam QR decoding. 1 MB wheel; the aarch64 build needs only glibc >= 2.26,
+# a looser bar than PySide6 itself. Deliberately not OpenCV (~90 MB, and its
+# bundled Qt plugins break PySide6 on Linux) and not pyzbar (needs libzbar0).
+zxing-cpp>=2.2
+
+# Analytics
+numpy>=1.26
+statsmodels>=0.14       # linear regression + Durbin-Watson
+scikit-learn>=1.4       # logistic regression, precision/recall/AUC
+
+# Security
+argon2-cffi>=23.1

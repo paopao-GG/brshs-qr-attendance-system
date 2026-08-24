@@ -1,0 +1,52 @@
+# TRACKIFY V1 configuration. Secrets live in .env, never here.
+
+[school]
+name = "Bicol Regional Science High School"
+entry_open = "06:00"
+late_threshold = "07:30"
+dismissal_time = "16:00"
+early_departure_cutoff = "15:30"
+
+[scanning]
+debounce_minutes = 5
+max_scans_per_day = 6
+input_rate_limit_per_sec = 5
+
+[camera]
+# Webcam QR scanning. Set enabled = false to run keyboard-only (a USB HID scanner
+# needs nothing here -- it is a keyboard).
+enabled = true
+device = "Web Camera"            # substring of the camera name; "" = first available
+width = 1280
+height = 720
+decode_fps = 10        # decode attempts/sec; the preview itself stays at 30 fps
+# A code must be ABSENT for this many decode attempts before it may fire again.
+# Absence, not time, is what re-arms it: a card left in front of the lens must
+# never register twice.
+absence_frames = 5
+cooldown_ms = 1500     # floor; the kiosk raises it to the current result hold time
+
+[notifications]
+# in_and_out = text guardian on arrival and departure
+# exceptions_only = text only for late / absent
+policy = "in_and_out"
+coalesce_window_minutes = 3
+retry_limit = 5
+backoff_seconds = [30, 120, 600, 1800, 3600]
+
+[limits]
+# Circuit breaker. Set slightly above realistic peak (students x 2 + absences).
+# Its job is to catch a loop bug, not to ration normal use.
+daily_message_cap = 1000
+per_recipient_daily_cap = 6
+requests_per_second = 2
+low_balance_warn_at = 200
+
+[risk]
+mu_tardiness = 0.20
+nu_early_departure = 0.25
+
+[risk.bands]
+low = 0.30
+monitor = 0.55
+elevated = 0.75

@@ -1,0 +1,202 @@
+/* TRACKIFY design system.
+ *
+ * Restrained and legible, not decorated. Default Qt widget styling reads as a 1990s
+ * utility; this is what separates the product from a school project.
+ *
+ * Semantic colour is reserved for scan outcome -- green/blue/amber/red carry meaning
+ * and are never used for decoration.
+ */
+
+/* --- base ------------------------------------------------------------- */
+
+/* Type and colour inherit; background does NOT paint by default. A universal
+ * background rule here would make every child panel opaque and hide the stage
+ * colour shift underneath -- which is the whole mechanism that makes an outcome
+ * readable across a corridor. */
+QWidget {
+    color: #E6EDEA;
+    font-family: "Segoe UI", "IBM Plex Sans", system-ui, sans-serif;
+    font-size: 15px;
+}
+
+/* Only these paint a background. */
+QWidget#Kiosk { background: #0E1613; }
+QWidget#Stage { background: #0E1613; }
+
+/* Panels sitting on the stage stay see-through so the outcome colour shows. */
+QWidget#Waiting, QWidget#Result { background: transparent; }
+QLabel { background: transparent; }
+
+/* --- waiting state ---------------------------------------------------- */
+
+QLabel#WaitingTitle {
+    font-size: 68px;
+    font-weight: 600;
+    color: #F2F7F5;
+    letter-spacing: -1px;
+}
+
+QLabel#WaitingHint {
+    font-size: 22px;
+    color: #7C8F89;
+}
+
+QLabel#Clock {
+    font-size: 120px;
+    font-weight: 300;
+    color: #F2F7F5;
+    letter-spacing: -3px;
+}
+
+QLabel#ClockDate {
+    font-size: 20px;
+    color: #7C8F89;
+    letter-spacing: 2px;
+}
+
+/* --- result state ----------------------------------------------------- */
+
+QLabel#Avatar {
+    font-size: 76px;
+    font-weight: 600;
+    color: #0E1613;
+    border-radius: 90px;
+    min-width: 180px;
+    max-width: 180px;
+    min-height: 180px;
+    max-height: 180px;
+    background: #E6EDEA;
+}
+
+QLabel#StudentName {
+    font-size: 54px;
+    font-weight: 600;
+    color: #F2F7F5;
+    letter-spacing: -0.5px;
+}
+
+QLabel#StudentSection {
+    font-size: 26px;
+    color: #9AACA6;
+    letter-spacing: 1px;
+}
+
+QLabel#Headline {
+    font-size: 96px;
+    font-weight: 700;
+    letter-spacing: 4px;
+}
+
+QLabel#Detail {
+    font-size: 30px;
+    color: #C6D4CF;
+}
+
+QLabel#TimeText {
+    font-size: 44px;
+    font-weight: 300;
+    color: #E6EDEA;
+}
+
+/* Outcome colours. Set via the Stage widget's dynamic "state" property so the whole
+ * screen shifts, not just the text -- readable across a corridor at a glance. */
+
+QWidget#Stage[state="in"]        { background: #0C2A1E; }
+QWidget#Stage[state="out"]       { background: #0B2233; }
+QWidget#Stage[state="already"]   { background: #2E2408; }
+QWidget#Stage[state="unknown"]   { background: #33130F; }
+QWidget#Stage[state="override"]  { background: #2E2408; }
+QWidget#Stage[state="neutral"]   { background: #171F1C; }
+
+QLabel#Headline[state="in"]       { color: #4ADE80; }
+QLabel#Headline[state="out"]      { color: #58B6F5; }
+QLabel#Headline[state="already"]  { color: #F5C451; }
+QLabel#Headline[state="unknown"]  { color: #F87171; }
+QLabel#Headline[state="override"] { color: #F5C451; }
+QLabel#Headline[state="neutral"]  { color: #9AACA6; }
+
+/* --- camera preview --------------------------------------------------- */
+
+/* #CameraPanel itself stays transparent. Only the inner stage paints, and only
+ * because a video surface needs something behind it while the first frame arrives --
+ * an opaque wrapper here would sit on the stage and hide the outcome colour, which is
+ * exactly the bug that made the result panel unreadable once before. */
+QWidget#CameraPanel { background: transparent; }
+
+QWidget#CameraStage {
+    background: #060B09;
+    border: 2px solid #24332E;
+    border-radius: 10px;
+}
+
+/* The scene view paints nothing of its own, so the rounded stage border above stays
+ * the visible edge of the preview. */
+QGraphicsView#CameraView {
+    background: transparent;
+    border: none;
+}
+
+QLabel#CameraStatus {
+    font-size: 20px;
+    font-weight: 600;
+    color: #F5C451;
+    background: transparent;
+}
+
+QLabel#CameraHint {
+    font-size: 16px;
+    color: #7C8F89;
+    letter-spacing: 0.5px;
+    background: transparent;
+}
+
+/* --- status bar ------------------------------------------------------- */
+
+QFrame#StatusBar {
+    background: #0A100E;
+    border-top: 1px solid #1E2A26;
+    min-height: 46px;
+    max-height: 46px;
+}
+
+QLabel.status {
+    font-size: 13px;
+    color: #7C8F89;
+    letter-spacing: 0.5px;
+}
+
+QLabel#StatusUnsent {
+    font-size: 13px;
+    font-weight: 600;
+    color: #7C8F89;
+}
+
+/* Unsent backlog turns amber so a network outage is noticed the same day. */
+QLabel#StatusUnsent[alert="true"] {
+    color: #F5C451;
+}
+
+QLabel#StatusCamera {
+    font-size: 13px;
+    font-weight: 600;
+    color: #7C8F89;
+}
+
+/* A camera that has died turns amber, so it is noticed the same morning rather than
+ * inferred afterwards from missing attendance data. */
+QLabel#StatusCamera[alert="true"] {
+    color: #F5C451;
+}
+
+QLabel#StatusSep {
+    color: #2A3733;
+}
+
+/* --- hidden scanner input --------------------------------------------- */
+
+QLineEdit#ScanInput {
+    background: transparent;
+    border: none;
+    color: transparent;
+    max-height: 1px;
+}
