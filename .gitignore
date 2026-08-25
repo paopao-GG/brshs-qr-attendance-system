@@ -2,7 +2,7 @@
 .env
 
 # Data
-student-info.xlsx
+# student-info.xlsx
 *.db
 *.db-wal
 *.db-shm
@@ -26,3 +26,11 @@ Thumbs.db
 .vscode/
 .idea/
 .claude/
+
+# qr-generator build artifacts and output
+qr-generator/build/
+qr-generator/dist/
+qr-generator/*.spec
+qr-generator/qr-out/
+# The QR signing secret, written at build time. Never commit.
+qr-generator/_baked.py

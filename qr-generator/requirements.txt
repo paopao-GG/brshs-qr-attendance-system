@@ -1,0 +1,11 @@
+# Standalone tool -- deliberately NOT the root requirements.txt. Nothing here is
+# needed on the Pi, and the kiosk's PySide6/zxing-cpp are not needed to make images.
+#
+# The UI is Tkinter from the standard library, so it is absent from this list.
+
+openpyxl>=3.1          # reads the roster; the only new dependency the project gains
+qrcode[pil]>=7.4       # same generator scripts/make_qr.py already uses
+Pillow>=10.0
+
+# Build only. Not imported at runtime.
+pyinstaller>=6.3

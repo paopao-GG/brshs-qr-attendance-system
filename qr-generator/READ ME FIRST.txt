@@ -1,0 +1,71 @@
+===============================================================
+  TRACKIFY - Student QR Code Generator
+===============================================================
+
+WHAT THIS DOES
+  Reads the student list (an Excel file from the adviser) and makes
+  one QR code picture for each student. Each picture is named after
+  the student, so "Almuena, Jan Adriel M..png" is that student's code.
+
+  Nothing needs to be installed. There is no Python to set up.
+
+
+HOW TO USE IT
+  1. Double-click  qr-generator.exe
+  2. Click "Browse..." next to "Excel file" and pick the student list
+     the adviser sent you.
+  3. Click "Browse..." next to "Output folder" and pick where the
+     pictures should go. Use the SAME folder every time (see below).
+  4. Click Generate.
+
+  The "QR secret" box is already filled in. Do not change it.
+
+
+WHEN THE ADVISER SENDS AN UPDATED LIST
+  Just run it again on the same output folder. The app compares the new
+  list against what it made last time and tells you exactly what moved:
+
+      NEW       a student was added        -> print their card
+      UPDATED   their LRN was corrected    -> REPRINT their card,
+                                              the old one no longer works
+      MOVED     their name spelling changed -> file renamed only,
+                                              the old card still works
+      REMOVED   they are off the list      -> collect their card
+      SAME      nothing changed            -> do NOT reprint
+
+  It only rewrites the codes that actually changed, so cards already
+  printed and handed out stay valid. It will show you the summary and
+  ask before writing anything.
+
+  IMPORTANT: always point it at the same output folder. That folder is
+  how the app remembers what it made last time. A brand new folder makes
+  everything look new.
+
+
+WHAT YOU GET
+  <your folder>\
+      11-Initiative\      one .png per student
+      11-Ingenuity\
+      11-Innovative\
+      manifest.csv        every code on file
+      changes.csv         what changed in the last run
+      skipped.csv         students who have NO LRN in the sheet
+      run.log             a copy of the last run's messages
+
+  Students with a blank LRN cell cannot get a code. They are listed in
+  skipped.csv - send that list back to the adviser to fill in.
+
+
+PRINTING
+  Print each code at least 25 mm (about 1 inch) wide.
+  Use MATTE lamination, not glossy. Glare on a shiny card is the usual
+  reason a code will not scan.
+
+
+IF SOMETHING GOES WRONG
+  Open run.log in the output folder - it records what happened on the
+  last run. Send that file to whoever set this up.
+
+  Do not share this folder outside the school. It contains the security
+  key that makes the codes valid.
+===============================================================
