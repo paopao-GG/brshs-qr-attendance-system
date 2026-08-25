@@ -1,9 +1,12 @@
 """Notification provider abstraction.
 
-Three implementations ship: PhilSMS for production, Console for development, and
-Null for the pilot. Development and the pilot never spend credits and never text a
-real parent, which is what makes it safe to exercise the whole pipeline end to end
-before go-live.
+Three implementations ship: Gsm (a SIM800C on a USB serial port) for production,
+Console for development, and Null for the pilot. Development and the pilot never spend
+load and never text a real parent, which is what makes it safe to exercise the whole
+pipeline end to end before go-live.
+
+This abstraction earned itself when the transport changed from an HTTP API to a serial
+modem: the queue, coalescing, spend breaker, worker and kiosk needed no change at all.
 """
 
 from __future__ import annotations
@@ -16,8 +19,10 @@ from dataclasses import dataclass
 class SendResult:
     """Outcome of one send attempt.
 
-    `ambiguous` is the important field. It means the request may or may not have
-    reached the provider -- a timeout or a dropped connection after the write. The
+    `ambiguous` is the important field. It means the message may or may not have been
+    submitted -- a timeout, a dropped connection, or a modem browning out after the
+    body was written. On a GSM module that is common rather than rare, because the
+    transmit burst is what causes the brownout in the first place. The
     queue must NOT auto-retry these: for SMS, at-most-once is the correct bias,
     because a missed text is recoverable and a duplicate erodes parent trust.
     """

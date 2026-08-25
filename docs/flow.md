@@ -11,7 +11,7 @@ Companion documents:
 |---|---|
 | [hardware.md](hardware.md) | Raspberry Pi 5, the DIY coil detector box, wiring, safety, test protocol |
 | [analytics-model.md](analytics-model.md) | Attendance rate, regression, AHP weighting, composite risk score |
-| [sms-notifications.md](sms-notifications.md) | Semaphore SMS integration, queueing, message templates, privacy |
+| [sms-notifications.md](sms-notifications.md) | GSM-module SMS transport, queueing, message templates, privacy |
 | [research-plan-review.md](research-plan-review.md) | Corrections needed in `RESEARCH-PLANCURRENT.docx` |
 
 ---
@@ -142,7 +142,7 @@ flowchart TD
     D -->|No| E[Leave pending; increment retry counter]
     E --> F[Backoff, then retry]
     F --> C
-    D -->|Yes| G[POST to Semaphore API]
+    D -->|Yes| G[AT+CMGS via SIM800C]
     G --> H{Accepted?}
     H -->|Yes| I[status=sent, store provider message id]
     H -->|No| J{Retry limit reached?}

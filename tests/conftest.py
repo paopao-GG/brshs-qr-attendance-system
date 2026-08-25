@@ -11,7 +11,21 @@ from trackify.core.config import load_config
 
 @pytest.fixture
 def config():
-    return load_config()
+    """Config with the developer's machine-local settings neutralised.
+
+    load_config() reads the real .env, so without this a value there silently changes
+    test outcomes on one machine and not another. Setting SMS_ALLOWLIST for live testing
+    did exactly that: every queue test that expected a message to be sent started seeing
+    it suppressed instead.
+
+    Tests that care about the allowlist set it explicitly with dataclasses.replace.
+    """
+    import dataclasses
+
+    cfg = load_config()
+    return dataclasses.replace(
+        cfg, secrets=dataclasses.replace(cfg.secrets, allowlist=())
+    )
 
 
 @pytest.fixture

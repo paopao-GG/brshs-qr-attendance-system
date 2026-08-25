@@ -194,6 +194,15 @@ def drain(
         ids = [r["id"] for r in group]
         coalesce_group = f"cg-{ids[0]}" if len(ids) > 1 else None
 
+        # Before the breaker, so a blocked recipient never consumes spend budget.
+        # Empty allowlist means unrestricted; a populated one is what makes it safe to
+        # run the real transport against a roster full of real-format numbers.
+        if not config.secrets.allows(mobile):
+            _mark(conn, ids, "suppressed",
+                  error=f"{mobile} is not on SMS_ALLOWLIST")
+            stats["suppressed"] += len(ids)
+            continue
+
         try:
             breaker.check(mobile)
         except BreakerTripped as exc:
@@ -220,7 +229,8 @@ def drain(
             stats["sent"] += len(ids)
         elif result.ambiguous:
             # Do NOT retry. The request may have landed. A human reconciles this
-            # against the PhilSMS dashboard from the queue monitor.
+            # by a human from the queue monitor. With a GSM module there is no
+            # provider dashboard to reconcile against, so this pile matters more.
             _mark(conn, ids, "unknown", error=result.error)
             stats["unknown"] += len(ids)
         else:

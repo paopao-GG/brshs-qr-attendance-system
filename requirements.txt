@@ -3,7 +3,9 @@ PySide6>=6.8            # LGPL binding. aarch64 wheel needs glibc >= 2.39 (Pi OS
 qtpy>=2.4               # binding abstraction so PySide6/PyQt6 is a config change
 
 # SMS + QR
-httpx>=0.27
+# SIM800C over USB serial. Pure Python, so unlike PySide6 and zxing-cpp it carries no
+# glibc or architecture constraint on the Pi.
+pyserial>=3.5
 qrcode[pil]>=7.4
 Pillow>=10.0
 

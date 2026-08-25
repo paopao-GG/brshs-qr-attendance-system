@@ -1,6 +1,6 @@
 """Philippine mobile number normalisation.
 
-Everything is stored as 639XXXXXXXXX, which is what PhilSMS expects as `recipient`.
+Everything is stored as 639XXXXXXXXX, and prefixed with + for AT+CMGS.
 Accepting the three common written forms at import time avoids a class of silent
 delivery failures where a valid number was rejected for its formatting.
 """

@@ -18,7 +18,7 @@ Research: [researcher name redacted] · Bicol Regional Science High School, Regi
 | **[flow.md](flow.md)** | System flow — actors, entry process, exception paths, records written. **Start here.** |
 | **[hardware.md](hardware.md)** | Raspberry Pi 5 station, DIY pulse-induction detector box, wiring, safety, calibration, test protocol, BOM |
 | **[analytics-model.md](analytics-model.md)** | Attendance rate, trend regression, per-student absence probability, AHP weighting, composite risk score |
-| **[sms-notifications.md](sms-notifications.md)** | Semaphore SMS integration, store-and-forward queue, message templates, cost model, privacy |
+| **[sms-notifications.md](sms-notifications.md)** | GSM-module SMS transport, store-and-forward queue, message templates, cost model, privacy |
 | **[research-plan-review.md](research-plan-review.md)** | Defects found in `RESEARCH-PLANCURRENT.docx`, with fixes, by priority |
 | `RESEARCH-PLANCURRENT.docx` | The research plan itself. Source of record — not modified by these docs |
 
@@ -46,7 +46,8 @@ Stated in full in [flow.md](flow.md) §2. In short:
 | Detector topology | Pulse induction, single coil, no nulling | [hardware.md](hardware.md) §4 |
 | Real-time sensing | RP2040 Pico front end; the Pi 5 has no ADC and Linux cannot hold µs timing | [hardware.md](hardware.md) §1 |
 | QR input | USB webcam in V1; a USB HID scanner is a drop-in upgrade | [hardware.md](hardware.md) §5 |
-| SMS transport | Semaphore API; **no** GSM module — 2G-only modules are caught by NTC MC 003-09-2025 | [sms-notifications.md](sms-notifications.md) §1 |
+| SMS | SIM800C GSM module on USB serial, Smart SIM — not an HTTP API | [hardware.md](hardware.md) §5 |
+| SMS transport | **SIM800C GSM module** on USB serial. Reverses the earlier API decision on cost and privacy; 2G's phase-out under NTC MC 002-09-2025 is a documented limitation | [sms-notifications.md](sms-notifications.md) §1 |
 | Notification policy | Exception-only, not every arrival | [sms-notifications.md](sms-notifications.md) §4 |
 | Absence prediction | Logistic regression — a linear model cannot output a probability | [analytics-model.md](analytics-model.md) §3–4 |
 | Risk normalisation | Saturating exponentials, not min–max | [analytics-model.md](analytics-model.md) §6 |

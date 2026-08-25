@@ -1,28 +1,26 @@
-"""Live PhilSMS test. Edit TEST_RECIPIENT below, then run this.
+"""Live SMS test for the SIM800C module. Edit TEST_RECIPIENT below, then run this.
 
-    python scripts/test_sms.py            # stages 1 and 2 only -- costs nothing
-    python scripts/test_sms.py --send     # stage 3: one real SMS, costs P0.35
+    python scripts/test_sms.py                # stages 1 and 2 -- sends nothing
+    python scripts/test_sms.py --send         # stage 3: one real SMS
+    python scripts/test_sms.py --scan         # which networks this SIM may use
 
-There is no PhilSMS sandbox. Every call is production, so this runs in stages and only
-the last one spends anything:
+Staged, because the failures are otherwise indistinguishable. From inside the kiosk,
+"no SIM", "not registered", "no signal", "blank SMS centre" and "the module is browning
+out under the transmit burst" all present as the same AT error.
 
-    1  --check    GET /me and /balance. Free. Proves the token, names the account,
-                  and reports remaining credits.
-    2  --preview  Renders every real template offline and validates GSM-7. Free.
-    3  --send     One message, to TEST_RECIPIENT only.
+    1  --check    Opens the port, runs the init sequence, prints module identity,
+                  SUPPLY VOLTAGE, signal, registration and SMS centre. No SMS.
+    2  --preview  Renders every real template offline and validates GSM-7. No port.
+    3  --send     One message, to TEST_RECIPIENT only, allowlist enforced.
 
-Stage 1 is the one that earns its keep. From inside the kiosk, a bad token, an
-unapproved sender ID and an empty credit balance all surface as the same generic 4xx.
-This tells them apart, which is why the response body is printed verbatim on failure --
-that is where PhilSMS says which of the three it actually is.
-
-This script deliberately touches neither the database nor the notification queue, so a
-failure here implicates PhilSMS and nothing else.
+The serial port is exclusive: this script and the kiosk cannot both hold it. If the
+kiosk is running, close it first.
 """
 from __future__ import annotations
 
 import argparse
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -44,138 +42,151 @@ from trackify.core import mobile
 from trackify.core.attendance import Trigger
 from trackify.core.config import load_config
 from trackify.notify import coalesce, gsm7, queue
+from trackify.notify.gsm import REGISTRATION, GsmError, GsmProvider, find_port
 
 RULE = "-" * 68
+
+
+def _operator_name(cops: str) -> str:
+    """+COPS: 0,0,"SMART" -> SMART. Bare "+COPS: 0" means no operator attached."""
+    fields = [f.strip().strip('"') for f in cops.split(",")]
+    return fields[2] if len(fields) >= 3 and fields[2] else "-"
 
 
 def heading(text: str) -> None:
     print(f"\n{text}\n{RULE}")
 
 
-# -- stage 1: does the account work at all ----------------------------------
+# -- stage 1: can this module send at all ------------------------------------
 
-def _client(token: str):
-    """A bare client for the free probes.
+def check(provider: GsmProvider) -> bool:
+    heading("1. MODULE CHECK  (no SMS sent)")
 
-    Deliberately not PhilSMSProvider: that constructor demands a sender ID, and the
-    whole point of stage 1 is to verify the token BEFORE a sender ID exists.
+    try:
+        health = provider.health(refresh=True)
+    except GsmError as exc:
+        print(f"  {exc}")
+        return False
+
+    print(f"  port       {health.port}")
+    print(f"  module     {health.identity}  (firmware {health.firmware})")
+    print(f"  SIM        {health.sim or 'no answer'}")
+
+    # Printed even when healthy. Idle voltage looking fine proves little -- the sag
+    # happens during the transmit burst -- but a low reading here settles it instantly.
+    volts = f"{health.voltage_mv} mV" if health.voltage_mv else "unknown"
+    flag = "  <-- TOO LOW, see below" if health.power_suspect else ""
+    print(f"  supply     {volts}{flag}")
+
+    dbm = f" ({health.signal_dbm} dBm)" if health.signal_dbm is not None else ""
+    print(f"  signal     {health.signal}{dbm}  {health.signal_label}")
+    # `or -1` would be wrong here: state 0 ("not registered, not searching") is falsy
+    # and would print as "unknown", hiding the single most useful diagnostic.
+    reg = ("unknown" if health.registration is None
+           else REGISTRATION.get(health.registration, str(health.registration)))
+    print(f"  network    {reg}   operator {_operator_name(health.operator)}")
+    print(f"  SMS centre {health.smsc or 'NOT SET'}")
+    if health.storage_total:
+        print(f"  storage    {health.storage_used}/{health.storage_total} messages")
+
+    blocker = health.blocker()
+    if blocker is None:
+        print("\n  Ready to send.")
+        return True
+
+    print(f"\n  BLOCKED: {blocker}")
+
+    sim_ready = "READY" in (health.sim or "").upper()
+    if not sim_ready and not health.power_suspect:
+        print("\n  The module itself is fine -- it answered, and a signal is showing.")
+        print("  Reseat the SIM: check it is the right way round, pushed fully")
+        print("  home, and that it is the size the tray expects. Then re-run.")
+    elif not health.registered and not health.power_suspect:
+        print("\n  The module and antenna are working if a signal is showing above.")
+        print("  A SIM that cannot register is usually one of these, in order:")
+        print("    - not registered under the SIM Registration Act -> deactivated")
+        print("    - expired: prepaid SIMs deactivate after months without use")
+        print("    - no load")
+        print("  Fastest test by far: put the SIM in an ordinary phone. If it cannot")
+        print("  register there either, the problem is the SIM, not this project.")
+        print("  Run --scan to see whether the network is refusing this SIM outright.")
+    return False
+
+
+def scan(provider: GsmProvider) -> bool:
+    """Which networks are visible, and may this SIM use them.
+
+    This is what distinguishes "no coverage" from "the network is refusing this SIM".
+    AT+CREG cannot tell those apart, and they need completely different fixes.
     """
-    import httpx
+    heading("NETWORK SCAN  (up to 2 minutes)")
+    print("  Asking the module which networks it can see...\n")
 
-    return httpx.Client(
-        timeout=httpx.Timeout(15.0, connect=5.0),
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-    )
+    try:
+        networks = provider.scan_networks()
+    except (GsmError, OSError) as exc:
+        print(f"  scan failed: {exc}")
+        return False
+
+    if not networks:
+        print("  No networks found. With 2G being phased out, that may mean there is")
+        print("  no 2G service in range at all.")
+        return False
+
+    for name, verdict in networks:
+        print(f"  {name:<18} {verdict.upper()}")
+
+    if any(v == "forbidden" for _, v in networks):
+        print("\n  FORBIDDEN means the network can see this SIM and is refusing it.")
+        print("  That is a SIM problem, not a coverage or module problem:")
+        print("    - not registered under the SIM Registration Act -> deactivated")
+        print("    - expired, barred, or never activated")
+        print("    - no load")
+        print("  Confirm by putting the SIM in an ordinary phone.")
+    return True
 
 
-def _redact(obj):
-    """The /me response echoes the API token straight back. Never print it."""
-    if isinstance(obj, dict):
-        return {k: ("<redacted>" if "token" in k.lower() or "key" in k.lower()
-                    else _redact(v)) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_redact(i) for i in obj]
-    return obj
+def inbox(provider: GsmProvider) -> bool:
+    """Messages received on the SIM.
 
-
-def _call(client, url: str):
-    """Returns (ok, payload_or_message).
-
-    PhilSMS answers HTTP 200 even when it refuses, so the status code proves nothing --
-    the JSON "status" field is the real answer.
+    The practical use: text this SIM from your own handset, then run this. The
+    sender column is your number exactly as the network reports it, which settles
+    any doubt about digits far better than reading it off a screen.
     """
-    import httpx
+    heading("SIM INBOX")
 
     try:
-        response = client.get(url)
-    except httpx.HTTPError as exc:
-        return False, f"unreachable: {exc}"
+        messages = provider.read_inbox()
+    except (GsmError, OSError) as exc:
+        print(f"  could not read: {exc}")
+        return False
+
+    if not messages:
+        print("  No messages on the SIM.")
+        print(f"  Text {_own_number(provider)} from your phone, then run this again.")
+        return False
+
+    for m in messages:
+        print(f"  [{m['index']}] {m['status']}  from {m['sender']}  {m['received']}")
+        print(f"      {m.get('body', '')}" + chr(10))
+    return True
+
+
+def _own_number(provider: GsmProvider) -> str:
+    """The SIM's own MSISDN via AT+CNUM. Often blank on PH prepaid SIMs."""
     try:
-        data = response.json()
-    except ValueError:
-        return False, f"HTTP {response.status_code}: {response.text[:200]}"
-    if not isinstance(data, dict) or str(data.get("status")).lower() == "error":
-        return False, str(data.get("message") if isinstance(data, dict) else data)
-    return True, data.get("data", data)
+        raw = provider._command("AT+CNUM", 5.0)
+    except Exception:
+        return "the module's number"
+    for line in raw.splitlines():
+        if "+CNUM:" in line:
+            parts = [f.strip().strip(chr(34)) for f in line.split(',')]
+            if len(parts) > 1 and parts[1]:
+                return parts[1]
+    return "the module's number"
 
 
-def check(token: str, sender_id: str) -> bool:
-    """Hits /me and /balance. Sends nothing, costs nothing, needs no sender ID."""
-    heading("1. ACCOUNT CHECK  (no SMS sent)")
-
-    from trackify.notify.philsms import API_BASE
-
-    print(f"  host       {API_BASE}")
-
-    ok = True
-    client = _client(token)
-    try:
-        good, payload = _call(client, f"{API_BASE}/me")
-        if good:
-            profile = _redact(payload)
-            print("  token      OK")
-            print(f"  account    {profile.get('first_name')} <{profile.get('email')}>")
-            print(f"  timezone   {profile.get('timezone')}")
-        else:
-            ok = False
-            print(f"  token      REJECTED -- {payload}")
-            print("\n  'Unauthenticated' means one of two things:")
-            print("    - the token in .env is wrong or expired, or")
-            print(f"    - your account is not on {API_BASE}")
-            print("  The public docs at app.philsms.com name a different host from the")
-            print("  one that actually accepts account tokens. If this keeps failing,")
-            print("  compare API_BASE in trackify/notify/philsms.py with the base URL")
-            print("  shown in your own dashboard.")
-
-        good, payload = _call(client, f"{API_BASE}/balance")
-        if good:
-            amount = payload.get("remaining_balance", payload)
-            expires = payload.get("expired_on", "?")
-            pesos = _peso_value(amount)
-            # Print the number, not the raw string: PhilSMS returns a peso sign, and a
-            # Windows console is cp1252, which cannot encode it. The same character is
-            # outside GSM-7, which is why gsm7.py rejects it in message bodies too.
-            shown = f"PHP {pesos:,.2f}" if pesos is not None else str(amount)
-            print(f"  balance    {shown}   (expires {expires})")
-            if pesos is not None:
-                print(f"             ~= {int(pesos / 0.35)} message(s) at PHP 0.35 each")
-                if pesos < 1:
-                    ok = False
-                    print("\n  No balance. A send will fail until the account is topped up.")
-        else:
-            print(f"  balance    could not be read -- {payload}")
-    finally:
-        client.close()
-
-    if not sender_id:
-        print("  sender_id  NOT SET -- required before anything can be sent")
-        print("\n  There is no API that lists or creates sender IDs; you register one")
-        print("  by hand in the PhilSMS dashboard. Free, several per account, 2-3 days")
-        print("  for telco approval.")
-        print("  You do not have to wait: the field also accepts a phone number with")
-        print("  country code, so putting your own number in PHILSMS_SENDER_ID lets you")
-        print("  test today and switch to a branded ID once it is approved.")
-    else:
-        print(f"  sender_id  {sender_id!r}")
-        if not sender_id.lstrip("+").isdigit():
-            print("             (alphanumeric -- needs telco approval. If a send is")
-            print("              rejected, try your own number here instead.)")
-    return ok
-
-
-def _peso_value(raw):
-    text = "".join(c for c in str(raw) if c.isdigit() or c == ".")
-    try:
-        return float(text)
-    except ValueError:
-        return None
-
-
-# -- stage 2: what the parent actually receives -----------------------------
+# -- stage 2: what the guardian actually receives ----------------------------
 
 def _fake_student(first: str, section: str) -> dict:
     """queue.render only ever subscripts the row, so a dict stands in for one."""
@@ -183,35 +194,30 @@ def _fake_student(first: str, section: str) -> dict:
 
 
 def preview() -> bool:
-    """Renders the real templates. No network, no cost.
+    """The real templates, rendered offline. No port, no SMS.
 
-    The bodies come from notify/queue and notify/coalesce rather than being retyped
-    here. A test that previews a message the product does not send proves nothing.
+    Bodies come from notify/queue and notify/coalesce rather than being retyped here. A
+    preview of a message the product does not send proves nothing.
     """
     heading("2. MESSAGE PREVIEW  (offline, no SMS sent)")
 
-    at = datetime(2026, 8, 24, 7, 12)
-    student = _fake_student("Juan", "Rizal")
+    at_time = datetime(2026, 8, 24, 7, 12)
     ok = True
 
-    rows = []
-    for trigger in Trigger:
-        body = queue.render(trigger, student, at)
-        rows.append(("single", trigger.value, body))
-
-    # The sibling case: the one most likely to overflow a segment.
-    sibling_rows = [
-        {"body": queue.render(Trigger.ARRIVAL, _fake_student("Juan", "Rizal"), at)},
-        {"body": queue.render(Trigger.ARRIVAL, _fake_student("Maria", "Bonifacio"), at)},
+    rows = [("single", t.value, queue.render(t, _fake_student("Juan", "Rizal"), at_time))
+            for t in Trigger]
+    siblings = [
+        {"body": queue.render(Trigger.ARRIVAL, _fake_student("Juan", "Rizal"), at_time)},
+        {"body": queue.render(Trigger.ARRIVAL, _fake_student("Maria", "Bonifacio"), at_time)},
     ]
-    rows.append(("coalesced", "2 siblings", coalesce.render_group(sibling_rows)))
+    rows.append(("coalesced", "2 siblings", coalesce.render_group(siblings)))
 
     for kind, label, body in rows:
-        chars, segs = len(body), gsm7.segments(body)
-        flag = "" if segs == 1 else f"  <-- {segs} SEGMENTS, costs {segs}x"
+        segs = gsm7.segments(body)
+        flag = "" if segs == 1 else f"  <-- {segs} SEGMENTS"
         if segs != 1:
             ok = False
-        print(f"\n  [{kind}/{label}]  {chars} chars, {segs} segment{flag}")
+        print(f"\n  [{kind}/{label}]  {len(body)} chars, {segs} segment{flag}")
         print(f"  {body}")
 
         bad = gsm7.offenders(body)
@@ -221,83 +227,80 @@ def preview() -> bool:
             for char, why in bad:
                 print(f"      {char!r}  {why}")
 
-    print()
+    print("\n  Note: guardians will see the SIM's own number as the sender, not a")
+    print("  sender ID. The 'TRACKIFY:' prefix is what identifies the school.")
     return ok
 
 
-# -- stage 3: the only part that costs money --------------------------------
+# -- stage 3: the only part that sends anything ------------------------------
 
-def send_one(config, recipient: str) -> bool:
-    heading("3. LIVE SEND  (this costs ~P0.35)")
+def send_one(provider: GsmProvider, recipient: str, text: str | None = None) -> bool:
+    heading("3. LIVE SEND")
 
-    from trackify.notify.philsms import PhilSMSProvider
-
-    provider = PhilSMSProvider(
-        config.secrets.philsms_api_token, config.secrets.philsms_sender_id
-    )
-
-    body = queue.render(
+    # Default to a real template rather than "test": it exercises the length and the
+    # GSM-7 charset the product actually uses.
+    body = text or queue.render(
         Trigger.ARRIVAL, _fake_student("Juan", "Rizal"), datetime.now()
     )
     print(f"  to      {mobile.for_display(recipient)}  ({recipient})")
-    print(f"  from    {provider.sender_id}")
     print(f"  body    {body}")
-    print(f"          {len(body)} chars, {gsm7.segments(body)} segment\n")
+    print(f"          {len(body)} chars, {gsm7.segments(body)} segment")
+    print("\n  Sending. A 2G submit takes 3-10 seconds...\n")
 
-    try:
-        result = provider.send(recipient, body)
-    finally:
-        provider.close()
+    started = time.monotonic()
+    result = provider.send(recipient, body)
+    elapsed = time.monotonic() - started
 
     if result.ok:
-        print(f"  SENT.  provider message id: {result.provider_message_id}")
-        print("\n  Check the handset. If nothing arrives within a minute or two, the")
-        print("  message was accepted by PhilSMS but dropped by the telco -- usually an")
-        print("  unapproved sender ID. Look at the dashboard's delivery log.")
+        print(f"  SENT in {elapsed:.1f}s.  reference: {result.provider_message_id}")
+        print("\n  Check the handset. The reference is a modem-local counter that wraps")
+        print("  at 255 -- it is for the log, and cannot be reconciled with anything.")
         return True
 
-    # The failure path is the reason this script exists: say which failure it was.
     if result.ambiguous:
-        print(f"  AMBIGUOUS: {result.error}")
-        print("\n  The request was written but the outcome is unknown. It may have been")
-        print("  delivered. Do not simply re-run -- check the PhilSMS dashboard first.")
+        print(f"  AMBIGUOUS after {elapsed:.1f}s: {result.error}")
+        print("\n  The message may already have been submitted. Do NOT simply re-run:")
+        print("  check the handset first, or a parent gets the same text twice. This is")
+        print("  the case the queue parks as 'unknown' rather than retrying.")
     else:
-        print(f"  FAILED: {result.error}")
-        print("\n  The error body above is PhilSMS telling you which of these it is:")
-        print("    - token wrong or expired      -> PHILSMS_API_TOKEN in .env")
-        print("    - sender ID not approved      -> register it in the dashboard, or")
-        print("                                     use your own number as the sender")
-        print("    - no credits                  -> top up")
-        print("    - recipient malformed         -> must be 639XXXXXXXXX")
+        print(f"  FAILED after {elapsed:.1f}s: {result.error}")
     return False
 
 
 # -- wiring -----------------------------------------------------------------
 
-def resolve_recipient(raw: str) -> str | None:
+def resolve_recipient(raw: str, config) -> str | None:
     if not raw.strip():
-        print("\nTEST_RECIPIENT is empty.")
-        print(f"Open {Path(__file__).name} and put your mobile number in it, near the top.")
+        print(f"\nTEST_RECIPIENT is empty. Put your number near the top of "
+              f"{Path(__file__).name}.")
         return None
     try:
         number = mobile.normalise(raw)
     except mobile.InvalidMobile as exc:
         print(f"\nTEST_RECIPIENT {raw!r} is not a valid PH mobile number: {exc}")
         return None
-    if number is None:
-        print(f"\nTEST_RECIPIENT {raw!r} did not normalise to a number.")
+    if number and not config.secrets.allows(number):
+        print(f"\n{number} is not on SMS_ALLOWLIST in .env, so it will not be texted.")
+        print("That is the safety net working. Add it there if it really is your number.")
         return None
     return number
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="PhilSMS live test")
-    parser.add_argument("--send", action="store_true",
-                        help="actually send one SMS (costs ~P0.35)")
-    parser.add_argument("--check-only", action="store_true",
-                        help="stage 1 only")
+    parser = argparse.ArgumentParser(description="SIM800C live SMS test")
+    parser.add_argument("--send", action="store_true", help="actually send one SMS")
+    parser.add_argument("--to", default=None, metavar="NUMBER",
+                        help="recipient for --send, overriding TEST_RECIPIENT")
+    parser.add_argument("--text", default=None, metavar="BODY",
+                        help="message body for --send (default: the arrival template)")
+    parser.add_argument("--inbox", action="store_true",
+                        help="list messages received on the SIM, with sender numbers")
+    parser.add_argument("--check-only", action="store_true", help="stage 1 only")
     parser.add_argument("--preview-only", action="store_true",
-                        help="stage 2 only, no network at all")
+                        help="stage 2 only -- no serial port touched")
+    parser.add_argument("--scan", action="store_true",
+                        help="list visible networks and whether this SIM may use them")
+    parser.add_argument("--port", default=None, help="override the serial port")
     args = parser.parse_args(argv)
 
     config = load_config()
@@ -305,39 +308,49 @@ def main(argv=None) -> int:
     if args.preview_only:
         return 0 if preview() else 1
 
-    token = config.secrets.philsms_api_token
-    sender_id = config.secrets.philsms_sender_id
-
-    if not token:
-        print("PHILSMS_API_TOKEN is not set in .env.")
-        print("Copy it from the PhilSMS dashboard, then re-run.")
+    port = args.port or config.gsm.port or find_port()
+    if not port:
+        print("No serial port found. Is the SIM800C plugged in?")
         return 1
 
-    healthy = check(token, sender_id)
-    if args.check_only:
-        return 0 if healthy else 1
-
-    clean = preview()
-
-    if not args.send:
-        print(RULE)
-        print("Nothing was sent. Re-run with --send to deliver one real message.")
-        return 0 if (healthy and clean) else 1
-
-    if not healthy:
-        print(RULE)
-        print("The account check failed above. Fix that before spending a credit.")
-        return 1
-    if not sender_id:
-        print(RULE)
-        print("PHILSMS_SENDER_ID is not set -- see the note above. Nothing sent.")
+    try:
+        provider = GsmProvider(
+            port, baud=config.gsm.baud,
+            send_timeout=config.gsm.send_timeout_s,
+            init_timeout=config.gsm.init_timeout_s,
+            # Reading the inbox means NOT wiping it during init.
+            clear_storage=not args.inbox,
+        )
+    except GsmError as exc:
+        print(exc)
         return 1
 
-    recipient = resolve_recipient(TEST_RECIPIENT)
-    if recipient is None:
-        return 1
+    try:
+        if args.inbox:
+            return 0 if inbox(provider) else 1
+        if args.scan:
+            return 0 if scan(provider) else 1
 
-    return 0 if send_one(config, recipient) else 1
+        healthy = check(provider)
+        if args.check_only:
+            return 0 if healthy else 1
+
+        clean = preview()
+
+        if not args.send:
+            print(f"\n{RULE}\nNothing was sent. Re-run with --send to deliver one message.")
+            return 0 if (healthy and clean) else 1
+
+        if not healthy:
+            print(f"\n{RULE}\nThe module check failed above. Fix that first.")
+            return 1
+
+        recipient = resolve_recipient(args.to or TEST_RECIPIENT, config)
+        if recipient is None:
+            return 1
+        return 0 if send_one(provider, recipient, args.text) else 1
+    finally:
+        provider.close()
 
 
 if __name__ == "__main__":

@@ -1,9 +1,9 @@
 """SMS drain worker.
 
 Runs the notification queue on a QThread so the Qt UI thread never blocks on network
-I/O. A PhilSMS call taking four seconds on a slow school connection would otherwise
-freeze the scan station mid-queue -- the most common way PyQt applications fail in
-the field.
+I/O. A 2G SMS submit takes three to ten seconds, and would otherwise freeze the scan
+station mid-queue -- the most common way PyQt applications fail in the field. With a
+serial modem this is not a worst case, it is every single message.
 
 Rules enforced here:
   * the worker owns its OWN SQLite connection (connections are never shared across
@@ -75,7 +75,8 @@ class SmsWorker(QObject):
         if recovered:
             self.alarm.emit(
                 f"{recovered} notification(s) were interrupted mid-send and need "
-                "reconciling against the PhilSMS dashboard."
+                "checking by hand. A GSM module has no provider dashboard to "
+                "reconcile against, so these need a human decision."
             )
 
         self._timer = QTimer()

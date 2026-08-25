@@ -1,6 +1,8 @@
 """Rate limiting. Three layers, protecting three different things.
 
-The outbound spend circuit breaker is the one that matters most. PhilSMS credits are
+The outbound circuit breaker is the one that matters most. On an unli-text SIM there
+is no per-message cost to act as a brake, so this cap is the only thing between a loop
+bug and several thousand texts to real guardians. Formerly prepaid credits are
 prepaid, so a loop bug in a notification trigger can burn the whole budget in minutes.
 The breaker is the difference between a bug costing PHP 20 and PHP 3,000: it halts the
 worker and raises a visible alarm rather than continuing.
@@ -21,7 +23,7 @@ class TokenBucket:
     """Rate limiter for scan input and outbound API calls.
 
     Used on the kiosk input handler so a stuck scanner or a held key cannot flood
-    the queue, and on the PhilSMS client so a burst at the morning bell does not
+    the queue, and on the outbound sender so a burst at the morning bell does not
     trigger provider-side 429s.
     """
 

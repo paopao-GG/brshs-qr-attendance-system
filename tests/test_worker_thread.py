@@ -1,6 +1,6 @@
 """The threading contract.
 
-A PhilSMS call taking seconds on a slow school connection must never freeze the scan
+An SMS send taking seconds -- and a 2G submit always does -- must never freeze the scan
 station. This is the failure mode that kills PyQt applications in the field, so it is
 tested rather than assumed.
 """

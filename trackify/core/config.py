@@ -54,7 +54,16 @@ class LimitsConfig:
     daily_message_cap: int
     per_recipient_daily_cap: int
     requests_per_second: float
-    low_balance_warn_at: int
+
+
+@dataclass(frozen=True)
+class GsmConfig:
+    """SIM800C over USB serial. Defaults so a config.toml without [gsm] still loads."""
+
+    port: str = ""              # "" = auto-detect by USB VID:PID; or COM3, /dev/ttyUSB0
+    baud: int = 115200
+    send_timeout_s: float = 60.0    # a 2G submit is genuinely this slow
+    init_timeout_s: float = 10.0
 
 
 @dataclass(frozen=True)
@@ -82,13 +91,16 @@ class RiskConfig:
 
 @dataclass(frozen=True)
 class Secrets:
-    philsms_api_token: str = ""
-    philsms_sender_id: str = ""
     qr_secret: str = ""
+    # Recipients allowed to receive a real text. EMPTY MEANS UNRESTRICTED, which is
+    # correct for production and dangerous while testing: the demo roster holds 19
+    # valid-format Philippine numbers, and an unli-text SIM has no cost brake to stop a
+    # loop bug texting all of them. Lives in .env rather than config.toml so a personal
+    # number never lands in git.
+    allowlist: tuple[str, ...] = ()
 
-    @property
-    def can_send_sms(self) -> bool:
-        return bool(self.philsms_api_token and self.philsms_sender_id)
+    def allows(self, mobile: str) -> bool:
+        return not self.allowlist or mobile in self.allowlist
 
 
 @dataclass(frozen=True)
@@ -99,6 +111,7 @@ class Config:
     limits: LimitsConfig
     risk: RiskConfig
     camera: CameraConfig = field(default_factory=CameraConfig)
+    gsm: GsmConfig = field(default_factory=GsmConfig)
     secrets: Secrets = field(default_factory=Secrets)
 
 
@@ -112,6 +125,24 @@ def _load_dotenv(path: Path) -> None:
             continue
         key, _, value = line.partition("=")
         os.environ.setdefault(key.strip(), value.strip())
+
+
+def _allowlist(raw: str) -> tuple[str, ...]:
+    """Comma-separated numbers, normalised so 09XX and 639XX both match what is stored."""
+    from .mobile import InvalidMobile, normalise
+
+    out = []
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            number = normalise(item)
+        except InvalidMobile:
+            continue
+        if number:
+            out.append(number)
+    return tuple(out)
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -150,9 +181,12 @@ def load_config(path: Path | None = None) -> Config:
             k: v for k, v in raw.get("camera", {}).items()
             if k in CameraConfig.__dataclass_fields__
         }),
+        gsm=GsmConfig(**{
+            k: v for k, v in raw.get("gsm", {}).items()
+            if k in GsmConfig.__dataclass_fields__
+        }),
         secrets=Secrets(
-            philsms_api_token=os.environ.get("PHILSMS_API_TOKEN", ""),
-            philsms_sender_id=os.environ.get("PHILSMS_SENDER_ID", ""),
             qr_secret=os.environ.get("TRACKIFY_QR_SECRET", ""),
+            allowlist=_allowlist(os.environ.get("SMS_ALLOWLIST", "")),
         ),
     )

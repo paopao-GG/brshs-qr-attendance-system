@@ -34,6 +34,8 @@ STUDENTS = [
     ("Rafael",     "Aquino",     1, "Delia Aquino",      "09193334444"),
     ("Camila",     "Mendoza",    1, "Rita Mendoza",      "09195556666"),
     ("Diego",      "Learner",     1, "Cely Learner",       "09197778888"),
+    # Wired to a real handset for live SMS testing. Every other number here is
+    # demo-only and must stay behind SMS_ALLOWLIST in .env.
     ("Lucia",      "Domingo",    1, "Fely Domingo",      "09199990000"),
     ("Mateo",      "Castillo",   1, "Vilma Castillo",    "09201112222"),
     ("Valentina",  "Navarro",    2, "Tessie Navarro",    "09203334444"),

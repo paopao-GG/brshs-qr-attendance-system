@@ -76,9 +76,11 @@ itself will do about it. Three gaps:
 - **A record stating that a prohibited item was found on a named minor is sensitive personal
   information** under RA 10173. It is not equivalent to attendance data and needs its own
   handling, access control, and retention rule.
-- **No disclosure that data leaves campus.** Guardian mobile numbers and student identifiers
-  are transmitted to a third-party SMS provider (Semaphore). This must appear in both the
-  consent form and §F. See [sms-notifications.md](sms-notifications.md) §6.
+- ~~**No disclosure that data leaves campus.**~~ **Resolved by the transport change.** SMS
+  now goes out through an on-campus GSM module rather than a third-party API, so guardian
+  numbers and student identifiers never reach an external provider. §F should state that
+  positively. Note the remaining limitation instead: the module is 2G-only and 2G is being
+  phased out under NTC MC 002-09-2025. See [sms-notifications.md](sms-notifications.md) §1.
 
 **Fix:** add a subsection to §F covering consent and assent, data classification, access
 control by role, retention period, and the third-party transfer.

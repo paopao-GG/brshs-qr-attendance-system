@@ -291,3 +291,72 @@ def test_unsent_count_surfaces_backlog(conn, make_student, config):
         sid = make_student(guardian_mobile=f"6391711111{i:02d}")
         queue.enqueue(conn, sid, Trigger.ARRIVAL, at(7, 0), config, direction="in")
     assert queue.unsent_count(conn) == 3
+
+
+# -- recipient allowlist ----------------------------------------------------
+
+def allowlisted(config, *numbers):
+    import dataclasses
+    return dataclasses.replace(
+        config, secrets=dataclasses.replace(config.secrets, allowlist=numbers)
+    )
+
+
+def test_allowlist_suppresses_everyone_not_on_it(conn, config, make_student):
+    """The demo roster holds 19 valid-format Philippine numbers, and an unli-text SIM
+    has no cost brake. Without this, one stray run texts all of them."""
+    student = make_student(guardian_mobile="639998887777")
+    queue.enqueue(conn, student, Trigger.ARRIVAL, at(7, 10), config, direction="in")
+    backdate(conn)
+
+    cfg = allowlisted(config, "639171234567")
+    provider = FlakyProvider([])
+    stats = queue.drain(conn, provider, cfg, breaker(conn, cfg))
+
+    assert provider.calls == [], "a number off the allowlist must not be texted"
+    assert stats["suppressed"] == 1
+
+
+def test_allowlisted_number_is_sent(conn, config, make_student):
+    student = make_student(guardian_mobile="639171234567")
+    queue.enqueue(conn, student, Trigger.ARRIVAL, at(7, 10), config, direction="in")
+    backdate(conn)
+
+    cfg = allowlisted(config, "639171234567")
+    provider = FlakyProvider([])
+    stats = queue.drain(conn, provider, cfg, breaker(conn, cfg))
+
+    assert len(provider.calls) == 1
+    assert stats["sent"] == 1
+
+
+def test_empty_allowlist_restricts_nothing(conn, config, make_student):
+    """Correct for production. It is the testing case that needs the list set."""
+    student = make_student(guardian_mobile="639998887777")
+    queue.enqueue(conn, student, Trigger.ARRIVAL, at(7, 10), config, direction="in")
+    backdate(conn)
+
+    provider = FlakyProvider([])
+    assert queue.drain(conn, provider, config, breaker(conn, config))["sent"] == 1
+
+
+def test_suppressed_recipient_does_not_consume_spend_budget(conn, config, make_student):
+    """The allowlist check sits before the breaker, so a blocked number costs nothing
+    against the daily cap -- and cannot mask a genuine runaway."""
+    student = make_student(guardian_mobile="639998887777")
+    queue.enqueue(conn, student, Trigger.ARRIVAL, at(7, 10), config, direction="in")
+    backdate(conn)
+
+    cfg = allowlisted(config, "639171234567")
+    brk = SpendBreaker(conn, daily_cap=5, per_recipient_cap=5)
+    queue.drain(conn, FlakyProvider([]), cfg, brk)
+
+    assert brk.state().sent_today == 0
+
+
+def test_config_fixture_does_not_inherit_the_local_allowlist(config):
+    """Regression: the config fixture calls load_config(), which reads the real .env.
+    Setting SMS_ALLOWLIST there for live testing suppressed every queue test that
+    expected a send. A developer's machine-local setting must never decide whether the
+    suite passes."""
+    assert config.secrets.allowlist == ()

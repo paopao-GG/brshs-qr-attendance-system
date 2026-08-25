@@ -30,11 +30,14 @@ STYLE = Path(__file__).parent / "trackify" / "ui" / "style.qss"
 
 
 def build_provider(name: str, config):
-    """Console and Null never spend credits and never text a real parent."""
-    if name == "philsms":
-        from trackify.notify.philsms import PhilSMSProvider
-        return PhilSMSProvider(
-            config.secrets.philsms_api_token, config.secrets.philsms_sender_id
+    """Console and Null never spend load and never text a real parent."""
+    if name == "gsm":
+        from trackify.notify.gsm import GsmProvider
+        return GsmProvider(
+            config.gsm.port or None,
+            baud=config.gsm.baud,
+            send_timeout=config.gsm.send_timeout_s,
+            init_timeout=config.gsm.init_timeout_s,
         )
     if name == "null":
         from trackify.notify.provider import NullProvider
@@ -53,7 +56,7 @@ def main(argv=None) -> int:
     parser.add_argument("--no-camera", action="store_true",
                         help="keyboard/HID-scanner input only")
     parser.add_argument("--provider", default="console",
-                        choices=["console", "null", "philsms"],
+                        choices=["console", "null", "gsm"],
                         help="notification provider (default: console, sends nothing)")
     args = parser.parse_args(argv)
 

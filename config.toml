@@ -36,11 +36,21 @@ backoff_seconds = [30, 120, 600, 1800, 3600]
 
 [limits]
 # Circuit breaker. Set slightly above realistic peak (students x 2 + absences).
-# Its job is to catch a loop bug, not to ration normal use.
+# Its job is to catch a loop bug, not to ration normal use -- and on an unli-text SIM
+# there is no cost brake, so this is the only thing that stops one.
 daily_message_cap = 1000
 per_recipient_daily_cap = 6
 requests_per_second = 2
-low_balance_warn_at = 200
+
+[gsm]
+# SIM800C over USB serial. Leave port empty to auto-detect the CH340 bridge by its
+# USB VID:PID -- the same code then finds COM3 on Windows and /dev/ttyUSB0 on the Pi.
+port = ""
+baud = 115200
+# A 2G submit really can take this long. A shorter timeout manufactures ambiguity,
+# and ambiguous sends are parked for a human rather than retried.
+send_timeout_s = 60
+init_timeout_s = 10
 
 [risk]
 mu_tardiness = 0.20

@@ -19,7 +19,7 @@ flowchart LR
         R[RTC + coin cell] --- PI
     end
     P -->|USB serial, JSON events| PI
-    PI -->|HTTPS| API[Semaphore SMS API]
+    PI -->|USB serial, AT| API[SIM800C GSM module]
     PI --- DB[(SQLite, local)]
 ```
 
@@ -309,6 +309,63 @@ study's consent section.
 Run `python scripts/check_camera.py` before the kiosk. It separates three failures that
 look identical from inside the application: the camera not opening, the code not
 decoding, and the code decoding but failing the HMAC check.
+
+### SMS transport
+
+**V1 sends SMS from an LC SIM800C V3 module on a USB serial port**, with a Smart/TNT
+prepaid SIM, rather than through an HTTP SMS API. On an unli-text promo the per-message
+cost is effectively zero, against ₱0.35 through an API — roughly ₱2,800 over a 20-day
+study of 200 students.
+
+Three consequences that are not obvious:
+
+| | Detail |
+|---|---|
+| **Throughput** | A 2G submit takes **3–10 seconds**, against ~0.5 s for an HTTP call. 400 messages a day is 20–65 minutes of near-continuous transmission. The queue is asynchronous so the scan station never waits, but the unsent counter visibly lags through the morning rush |
+| **No sender ID** | Guardians see the SIM's own mobile number, not `TRACKIFY`. The `TRACKIFY:` prefix in the message body carries the whole burden of identifying the school — and parents can reply, to an inbox nobody reads |
+| **No delivery dashboard** | `+CMGS` returns a reference in 0–255 that wraps. It goes in the log and cannot be reconciled against anything afterwards. Sends whose outcome is unknown must be judged by a human |
+
+#### Power is the failure you will actually meet
+
+The SIM800C runs at 3.4–4.4 V and draws **up to 2 A during the transmit burst**. A laptop
+USB 2.0 port supplies 0.5 A, USB 3.0 0.9 A.
+
+The module then browns out and resets mid-send — and it presents as no response to `AT`,
+failed network registration, or `AT+CMGS` returning `ERROR`. Every one of those looks like
+a dead SIM, a wrong baud rate, or a bad AT sequence. Hours get lost chasing software.
+
+**Feed VBAT from a supply that can deliver 2 A**, with 470 µF–1000 µF of bulk capacitance
+across it, and keep USB for data only. `scripts/test_sms.py --check` reports the supply
+voltage (`AT+CBC`) precisely so this can be ruled in or out in seconds.
+
+#### The 2G expiry date
+
+SIM800C is **2G-only** — quad-band GSM/GPRS, no 3G or LTE radio. Under **NTC Memorandum
+Circular 002-09-2025**, 3G shuts down nationwide by **31 December 2026**, 2G follows on a
+separate later schedule, and the NTC **no longer type-approves or permits importation of
+2G-only devices**.
+
+For a 20-day study this is fine. For the school deployment it is a hard limitation that
+belongs in the paper: the cheap transport stands on a network being switched off. Plan on
+returning to an HTTP API or moving to an LTE Cat-1 module for any 2027 deployment.
+
+**DITO will not work at all.** It launched as a 4G/5G-only operator and never deployed 2G,
+so a SIM800C cannot register on it. Use Globe or Smart.
+
+#### Bring-up order
+
+```bash
+python scripts/test_sms.py --check     # module, SIM, voltage, signal, registration, SMSC
+python scripts/test_sms.py --scan      # which networks will accept this SIM
+python scripts/test_sms.py --send      # one real message
+```
+
+`--scan` matters because `AT+CREG` cannot distinguish *no coverage* from *the network can
+see this SIM and is refusing it*. `AT+COPS=?` returns a status per network, where **3
+means forbidden** — which points at the SIM (unregistered under the SIM Registration Act,
+expired, barred, or out of load) rather than at coverage or the module.
+
+The serial port is exclusive: the kiosk and the test script cannot both hold it.
 
 ---
 

@@ -1,51 +1,77 @@
 # TRACKIFY — SMS Notifications
 
-**Decision: SMS API (Semaphore). No GSM/LTE hardware module.**
+**Decision: LC SIM800C V3 GSM module on USB serial, Smart/TNT SIM.**
+
+> **This reverses the earlier decision in this document**, which chose the Semaphore HTTP
+> API and argued against a GSM module. The reasoning that follows is the reversal, kept
+> visible rather than quietly rewritten, because the objection it overrules is real and
+> has to be answered in the paper.
 
 ---
 
-## 1. Why an API and not a GSM module
+## 1. Why a GSM module, and what it costs to choose one
 
-The comparison was going to be a judgement call about reliability and cost. Philippine
-regulation largely settled it.
+### The original objection still stands
 
-**NTC Memorandum Circular No. 003-09-2025** (issued 28 August 2025) orders the phase-out of 2G
-and 3G mobile networks, with nationwide 3G shutdown by **31 December 2026** and 2G following on
-a separate area-specific schedule. Critically for a hardware build, the same circular provides
-that the NTC **no longer accepts type-approval applications for devices with exclusive or
-primary 2G/3G capability**, and that importation and sale of such devices is prohibited.
+**NTC Memorandum Circular 002-09-2025** orders the phase-out of 2G and 3G mobile networks:
+nationwide 3G shutdown by **31 December 2026**, 2G following on a separate area-specific
+schedule. The same circular provides that the NTC **no longer accepts type-approval
+applications for devices with exclusive 2G or 3G capability**, and that importation and
+market entry of such devices is prohibited.
 
-A **SIM800L or SIM900A — the modules almost every tutorial uses — is a 2G-only device.** For a
-system deployed across the 2026–2027 school year, that means building on a network being
-decommissioned, using a device class now restricted from import and sale. It is a fair question
-for a judge to ask, and there is no good answer to it.
+*(Earlier drafts of this document cited this as MC 003-09-2025. Verify the number against
+the NTC PDF before it goes into the paper.)*
 
-The remaining hardware option would be an LTE Cat-1 module (SIM7600, A7670C) at roughly
-₱1,500–2,800. That is viable, but against an API it still carries the power problem (transmit
-bursts draw ~2 A and must never come off the Pi's rail), serial throughput of ~3–6 s per
-message, and the risk of a consumer SIM being flagged for spam when it sends near-identical
-messages to hundreds of numbers.
+**A SIM800C is a 2G-only device.** Everything the earlier draft said about that remains
+true. It was not wrong; it was outweighed.
 
-| | **Semaphore API** (chosen) | GSM/LTE module |
+### What outweighed it
+
+| | GSM module (chosen) | HTTP SMS API |
 |---|---|---|
-| Regulatory exposure | None | 2G-only modules restricted; LTE required |
-| Hardware | None | Module, power supply, antenna, enclosure |
-| Cost | ~₱0.50/SMS, no setup fee | ₱1,500–2,800 + SIM load |
-| Throughput | Hundreds per minute | ~3–6 s each, serial |
-| Delivery status | Provider message ID and status | Weak, unreliable via raw AT commands |
-| Bulk sending | Designed for it | Consumer SIMs get spam-flagged |
-| Internet needed | **Yes — the main trade-off** | No |
-| Student data leaves campus | **Yes — must be disclosed** | No |
-| Pi 5 integration | An HTTPS POST | UART config, level shifting, power design |
+| Cost per message | **≈ ₱0 on an unli-text promo** | ₱0.35–0.50 |
+| Cost for a 20-day, 200-student study | **≈ ₱0** after the module | **≈ ₱2,800** |
+| Internet needed | **No** | Yes — a single point of failure at a school |
+| Student data leaves campus | **No** | **Yes** — a Data Privacy Act disclosure |
+| Regulatory life | **Expires with 2G** | Indefinite |
+| Throughput | 3–10 s per message, serial | Hundreds per minute |
+| Delivery status | A wrapping 0–255 reference, no dashboard | Provider message ID and status |
+| Sender identity | The SIM's own number | A registered sender ID |
+| Hardware | Module, 2 A supply, antenna, enclosure | None |
 
-### The two costs of this choice, and how they are handled
+Two of those lines are the whole argument. The cost difference is the study's entire SMS
+budget, and **the privacy position genuinely improves**: guardian numbers and student
+identifiers no longer leave the campus for a third party. The earlier draft listed that
+disclosure as a cost that "cannot be handled technically — it has to be disclosed". It no
+longer has to be, and [research-plan-review.md](research-plan-review.md) item 8 should be
+updated to say so.
 
-1. **The internet becomes a single point of failure.** Handled by the store-and-forward queue
-   in §3 — an outage delays notifications, it never loses them.
-2. **Guardian mobile numbers and student identifiers go to a third party.** This is a Data
-   Privacy Act matter and must be disclosed in the consent form and in §F of the research plan.
-   See §6 and [research-plan-review.md](research-plan-review.md) item 8. It cannot be handled
-   technically — it has to be disclosed.
+### The honest statement of the limitation
+
+For the **study** — roughly 20 days in 2026 — 2G is live on Smart and this works. For a
+**school deployment across 2027 and beyond**, the transport has an expiry date, and the
+system will need either an HTTP API or an LTE Cat-1 module (SIM7600, A7670C, ₱1,500–2,800).
+
+This belongs in the paper's limitations section rather than being hidden, and it is
+arguably a finding: a low-cost build of this kind is standing on infrastructure being
+switched off.
+
+### Three practical consequences
+
+1. **Throughput.** 400 messages a day is 20–65 minutes of near-continuous transmission.
+   The queue is asynchronous so the scan station never blocks, but guardian coalescing
+   stops being a courtesy to sibling families and becomes a throughput measure.
+2. **No sender ID.** Guardians see the SIM's own number. The `TRACKIFY:` prefix in the
+   body carries the whole burden of identifying the school — and parents can reply, to an
+   inbox nobody reads. SIM storage must be cleared or outgoing sends eventually fail.
+3. **Power, which is what actually goes wrong.** The transmit burst draws up to 2 A; a
+   laptop USB port supplies 0.5–0.9 A. The resulting brownout resets look exactly like a
+   dead SIM or a bad AT sequence. See [hardware.md](hardware.md) §5.
+
+### Networks
+
+**Smart or Globe only.** DITO launched as a 4G/5G-only operator and never deployed 2G, so
+a SIM800C cannot register on it at all.
 
 ---
 
@@ -59,7 +85,7 @@ NotificationProvider
   ├── send(recipient, body) -> {ok, provider_message_id, error}
   └── name
 
-SemaphoreProvider     # production
+GsmProvider           # production -- SIM800C on a USB serial port
 ConsoleProvider       # development — prints, never sends
 NullProvider          # dry-run for the pilot, counts without sending
 ```
@@ -69,26 +95,32 @@ This exists for three practical reasons, not architectural neatness:
 - You can develop and demo the entire flow without spending credits or texting real parents
 - The pilot can run end-to-end with `NullProvider` and prove the queue works before a single
   real message goes out
-- If Semaphore is unavailable on deployment day, swapping providers touches one class
+- Swapping the transport touches one class. This was proven, not hoped for: moving from
+  the Semaphore/PhilSMS HTTP provider to a serial modem left the queue, coalescing, spend
+  breaker, QThread worker and kiosk completely unchanged
 
-### Semaphore request shape
+### The AT command shape
 
 ```
-POST https://api.semaphore.co/api/v4/messages
-
-  apikey      = <from environment>
-  number      = 09171234567          # or comma-separated for bulk
-  message     = <body>
-  sendername  = <registered sender name>
+AT+CMGF=1                        text mode, not PDU
+AT+CSCS="GSM"                    GSM-7 charset, matching notify/gsm7.py
+AT+CMGS="+639171234567"    ->  > prompt
+{body}<Ctrl-Z, 0x1A>       ->  +CMGS: 23   then   OK
 ```
 
-Sender names must be registered and approved by Semaphore before use; unregistered sends fall
-back to their default sender. **Register yours early** — approval is not instant and a school
-notification arriving from a generic sender is far less credible to a parent.
+There is **no sender name to register**. The recipient sees the SIM's own mobile number,
+which is why every template opens with `TRACKIFY:` — that prefix is the only thing telling
+a parent who the message is from.
 
-Verify current endpoints, parameter names, and status values against
-[semaphore.co/docs](https://semaphore.co/docs) before implementing — treat the above as the
-shape, not as gospel.
+Two commands in the init sequence are easy to omit and expensive to omit:
+
+- `AT+CSCA?` — the SMS centre number. **Blank means every send fails silently.**
+- `AT+CMGD=1,4` — clear stored messages. Replies and delivery reports accumulate in SIM
+  storage, and **once it is full, outgoing sends start failing.** On a SIM whose number
+  parents can reply to, that is weeks away, not years.
+
+`+CMGS` returns a message reference in 0–255 that **wraps**. Store it for the log; it
+cannot be reconciled against anything, because there is no provider dashboard.
 
 ---
 
@@ -181,8 +213,10 @@ rather than `₱500`. Write templates in a plain-text editor, never Word.
 
 ## 6. Privacy
 
-- **Disclose the third-party transfer.** Guardian mobile numbers and student identifiers are
-  transmitted to Semaphore. This belongs in the consent form and in §F of the research plan.
+- **No third-party transfer.** This improved when the transport moved to a GSM module:
+  guardian mobile numbers and student identifiers now go from the Pi straight to the
+  mobile network, never to an SMS provider's servers. The consent form should say so
+  positively rather than carrying the disclosure the API version needed.
 - **Minimise the payload.** First name and section, not full name. No LRN, no item description,
   no risk score, ever.
 - **Consent gates participation.** No notification is sent for a student without
