@@ -81,6 +81,11 @@ QLabel#StudentSection {
     letter-spacing: 1px;
 }
 
+QLabel#StudentAdviser {
+    font-size: 20px;
+    color: #7C8C87;
+}
+
 QLabel#Headline {
     font-size: 96px;
     font-weight: 700;
@@ -107,6 +112,9 @@ QWidget#Stage[state="already"]   { background: #2E2408; }
 QWidget#Stage[state="unknown"]   { background: #33130F; }
 QWidget#Stage[state="override"]  { background: #2E2408; }
 QWidget#Stage[state="neutral"]   { background: #171F1C; }
+/* A ground that says "different mode", not one that implies an outcome --
+   nothing has been decided yet when this page is up. */
+QWidget#Stage[state="inspect"]   { background: #12161F; }
 
 QLabel#Headline[state="in"]       { color: #4ADE80; }
 QLabel#Headline[state="out"]      { color: #58B6F5; }
@@ -200,3 +208,154 @@ QLineEdit#ScanInput {
     color: transparent;
     max-height: 1px;
 }
+
+QLabel#ScreeningPrompt {
+    font-size: 18px;
+    color: #9AACA6;
+}
+
+
+QLabel#DialogHeading {
+    font-size: 22px;
+    font-weight: 600;
+}
+
+QLabel#DialogHint {
+    font-size: 14px;
+    color: #7C8C87;
+    padding-bottom: 6px;
+}
+
+QLabel#DialogError {
+    font-size: 14px;
+    color: #F58F58;
+}
+
+/* --- screening buttons -------------------------------------------------- */
+/* Generous for a mouse but readable across a corridor: the operator glances
+   between the bag and this row, not at it. */
+
+QPushButton#ScreeningPrimary {
+    font-size: 20px;
+    font-weight: 600;
+    color: #0E1613;
+    background: #E6EDEA;
+    border: none;
+    border-radius: 6px;
+    padding: 14px 26px;
+    min-width: 190px;
+}
+QPushButton#ScreeningPrimary:hover  { background: #FFFFFF; }
+QPushButton#ScreeningPrimary:pressed { background: #B9C7C2; }
+
+QPushButton#ScreeningCategory {
+    font-size: 17px;
+    font-weight: 600;
+    color: #E6EDEA;
+    background: transparent;
+    border: 2px solid #7C8C87;
+    border-radius: 6px;
+    padding: 9px 20px;
+    min-width: 104px;
+}
+QPushButton#ScreeningCategory:hover   { border-color: #E6EDEA; }
+QPushButton#ScreeningCategory:pressed { background: #2A3A35; }
+
+/* Not screened / Back. Quiet on purpose -- an escape hatch must be reachable
+   without ever looking like one of the normal answers. */
+QPushButton#ScreeningMinor {
+    font-size: 15px;
+    color: #9AACA6;
+    background: transparent;
+    border: 1px solid #4A5A55;
+    border-radius: 5px;
+    padding: 8px 16px;
+}
+QPushButton#ScreeningMinor:hover { color: #E6EDEA; border-color: #7C8C87; }
+
+QLabel#ScreeningGroup {
+    font-size: 13px;
+    font-weight: 600;
+    color: #7C8C87;
+    letter-spacing: 1.5px;
+    padding-top: 4px;
+}
+
+QLabel#ScreeningPrompt[alert="true"] {
+    font-size: 19px;
+    font-weight: 600;
+    color: #F58F58;
+}
+
+/* --- bag inspection page ------------------------------------------------ */
+
+QLabel#InspectAvatar {
+    font-size: 24px;
+    font-weight: 600;
+    color: #0E1613;
+    border-radius: 26px;
+    min-width: 52px;  max-width: 52px;
+    min-height: 52px; max-height: 52px;
+    background: #E6EDEA;
+}
+
+QLabel#InspectStudent {
+    font-size: 26px;
+    font-weight: 600;
+    color: #E6EDEA;
+}
+
+QLabel#InspectSection {
+    font-size: 20px;
+    color: #8A97A8;
+    padding-left: 4px;
+}
+
+QLabel#InspectHeading {
+    font-size: 34px;
+    font-weight: 600;
+    color: #E6EDEA;
+}
+
+QLabel#InspectRule {
+    font-size: 16px;
+    color: #8A97A8;
+    padding-top: 2px;
+}
+
+QLabel#InspectGroup {
+    font-size: 13px;
+    font-weight: 600;
+    color: #7C8C87;
+    letter-spacing: 2px;
+    padding-bottom: 8px;
+}
+
+/* Cards. Hover and pressed states are not decoration: without visible feedback a
+   hurried operator taps twice and the second click lands on the next screen. */
+QToolButton#InspectCard, QToolButton#InspectCardDanger {
+    font-size: 17px;
+    font-weight: 600;
+    color: #E6EDEA;
+    background: #1B2130;
+    border: 1px solid #2C3547;
+    border-radius: 10px;
+    padding: 18px 10px 14px 10px;
+    min-width: 148px;
+    min-height: 118px;
+}
+QToolButton#InspectCard:hover {
+    background: #232B3D;
+    border-color: #4B5B78;
+}
+QToolButton#InspectCard:pressed { background: #2B3550; }
+
+QToolButton#InspectCardDanger {
+    color: #F0918F;
+    border-color: #57302F;
+}
+QToolButton#InspectCardDanger:hover {
+    background: #2A1E20;
+    border-color: #8C4A48;
+}
+QToolButton#InspectCardDanger:pressed { background: #372628; }

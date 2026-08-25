@@ -2,6 +2,7 @@
 .env
 
 # Data
+student-info.xlsx
 *.db
 *.db-wal
 *.db-shm

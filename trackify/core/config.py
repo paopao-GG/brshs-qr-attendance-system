@@ -81,6 +81,19 @@ class CameraConfig:
 
 
 @dataclass(frozen=True)
+class ScreeningConfig:
+    """Gate screening. Defaulted throughout so an older config.toml still loads."""
+
+    enabled: bool = True
+    # Printed on the screen so the guard knows what to put in the tray.
+    declared_items_hint: str = "phone, laptop, tablet, tumbler, coins"
+
+    # There is deliberately no timeout here. The screening prompt stays until a person
+    # clicks: a screen that closes itself would record an outcome nobody chose. If a
+    # timeout is ever reintroduced, read prohibited-items.md 5 first.
+
+
+@dataclass(frozen=True)
 class RiskConfig:
     mu_tardiness: float
     nu_early_departure: float
@@ -111,6 +124,7 @@ class Config:
     limits: LimitsConfig
     risk: RiskConfig
     camera: CameraConfig = field(default_factory=CameraConfig)
+    screening: ScreeningConfig = field(default_factory=ScreeningConfig)
     gsm: GsmConfig = field(default_factory=GsmConfig)
     secrets: Secrets = field(default_factory=Secrets)
 
@@ -180,6 +194,10 @@ def load_config(path: Path | None = None) -> Config:
         camera=CameraConfig(**{
             k: v for k, v in raw.get("camera", {}).items()
             if k in CameraConfig.__dataclass_fields__
+        }),
+        screening=ScreeningConfig(**{
+            k: v for k, v in raw.get("screening", {}).items()
+            if k in ScreeningConfig.__dataclass_fields__
         }),
         gsm=GsmConfig(**{
             k: v for k, v in raw.get("gsm", {}).items()

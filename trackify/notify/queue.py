@@ -34,12 +34,41 @@ TEMPLATES = {
         "TRACKIFY: {first} ({section}) was not recorded present on {date}. "
         "Please contact the school if unexpected."
     ),
+    # DELIBERATELY VAGUE, and it must stay that way. An SMS is unencrypted, passes
+    # through the telco, and a wrong guardian number on a school roster sends a child's
+    # data to a stranger -- the likeliest real privacy incident in this system.
+    # "Your child was found carrying a knife" arriving on the wrong handset is the
+    # worst thing this system could do. The item, the category and the severity are
+    # delivered by a person, to a verified parent, in the school office.
+    Trigger.INCIDENT: (
+        "TRACKIFY: Please contact the school today regarding {first} ({section})."
+    ),
 }
 
+# Words that must never reach an SMS body. Checked at enqueue time rather than trusted
+# to a template that someone edits later without reading the comment above.
+INCIDENT_FORBIDDEN = (
+    "knife", "blade", "bladed", "dagger", "razor", "cutter", "weapon", "hammer",
+    "knuckle", "pointed", "blunt", "severity", "prohibited", "incident",
+)
 
-def idempotency_key(student_id: int, trigger: Trigger, day: str, direction: str | None) -> str:
-    """Stable across restarts, so re-enqueueing the same event is a no-op."""
+
+def idempotency_key(
+    student_id: int, trigger: Trigger, day: str, direction: str | None,
+    dedupe_extra: str | None = None,
+) -> str:
+    """Stable across restarts, so re-enqueueing the same event is a no-op.
+
+    dedupe_extra is appended only when given, so every key generated before it
+    existed still hashes to the same value -- a pending row must not be orphaned by
+    a code change and then re-sent as a "new" message.
+
+    It exists for incidents: one student can have two on the same day, and without a
+    discriminator the second would be silently swallowed as a duplicate of the first.
+    """
     raw = f"{student_id}|{trigger.value}|{day}|{direction or ''}"
+    if dedupe_extra:
+        raw += f"|{dedupe_extra}"
     return sha256(raw.encode("utf8")).hexdigest()
 
 
@@ -77,6 +106,7 @@ def enqueue(
     config: Config,
     *,
     direction: str | None = None,
+    dedupe_extra: str | None = None,
 ) -> EnqueueResult:
     """Write a pending notification. Never sends, never blocks."""
     student = _student(conn, student_id)
@@ -103,7 +133,22 @@ def enqueue(
         # Fail at enqueue time, not silently at double cost on every send.
         return EnqueueResult(False, f"invalid body: {exc}")
 
-    key = idempotency_key(student_id, trigger, at.date().isoformat(), direction)
+    # A belt-and-braces check on the one message that must never describe anything.
+    # The template is already vague; this catches the day someone "improves" it to be
+    # more informative without reading why it was not.
+    if trigger is Trigger.INCIDENT:
+        lowered = body.lower()
+        leaked = [w for w in INCIDENT_FORBIDDEN if w in lowered]
+        if leaked:
+            return EnqueueResult(
+                False,
+                f"incident body must not describe the item; found {leaked}. "
+                "The detail is delivered by a person, not by SMS.",
+            )
+
+    key = idempotency_key(
+        student_id, trigger, at.date().isoformat(), direction, dedupe_extra
+    )
     cursor = conn.execute(
         """INSERT OR IGNORE INTO notifications
            (student_id, guardian_mobile, trigger, idempotency_key, body,
@@ -145,18 +190,29 @@ def claim_batch(
     window = timedelta(minutes=config.notifications.coalesce_window_minutes)
     cutoff = (now - window).isoformat(timespec="seconds")
 
+    ready = now.isoformat(timespec="seconds")
     rows = conn.execute(
         """SELECT * FROM notifications
-           WHERE status = 'pending' AND queued_at <= ?
+           WHERE status = 'pending'
+             AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+             AND (queued_at <= ? OR trigger = 'incident')
            ORDER BY guardian_mobile, event_at, id""",
-        (cutoff,),
+        (ready, cutoff),
     ).fetchall()
 
+    # Incidents skip the coalescing window entirely and are never merged with anything.
+    # Two reasons, and both matter: "please contact the school today" should not sit in
+    # a queue for three minutes, and merging it into a sibling's arrival message would
+    # bury the one sentence the parent needs to act on at the end of a cheerful text.
+    urgent = [r for r in rows if r["trigger"] == "incident"]
+    rest = [r for r in rows if r["trigger"] != "incident"]
+
+    planned: list[tuple[list[sqlite3.Row], str]] = [([r], r["body"]) for r in urgent]
+
     by_guardian: dict[str, list[sqlite3.Row]] = {}
-    for row in rows:
+    for row in rest:
         by_guardian.setdefault(row["guardian_mobile"], []).append(row)
 
-    planned: list[tuple[list[sqlite3.Row], str]] = []
     for group in by_guardian.values():
         planned.extend(coalesce.plan_messages(group, window))
 
@@ -188,6 +244,7 @@ def drain(
     Runs on a worker thread, never the Qt UI thread.
     """
     stats = {"sent": 0, "failed": 0, "unknown": 0, "suppressed": 0, "messages": 0}
+    now = now or datetime.now()
 
     for group, body in claim_batch(conn, config, now=now):
         mobile = group[0]["guardian_mobile"]
@@ -234,7 +291,7 @@ def drain(
             _mark(conn, ids, "unknown", error=result.error)
             stats["unknown"] += len(ids)
         else:
-            _retry_or_fail(conn, group, config, result.error)
+            _retry_or_fail(conn, group, config, result.error, now)
             stats["failed"] += len(ids)
 
     return stats
@@ -256,17 +313,42 @@ def _mark(
     )
 
 
+def backoff_for(attempts: int, config: Config) -> int:
+    """Seconds to wait before attempt number `attempts` may be retried.
+
+    The ladder is clamped at its last entry rather than wrapping, so a long outage
+    settles at the longest delay instead of dropping back to 30 seconds.
+    """
+    ladder = config.notifications.backoff_seconds
+    if not ladder:
+        return 0
+    return ladder[min(attempts - 1, len(ladder) - 1)]
+
+
 def _retry_or_fail(
-    conn: sqlite3.Connection, group: list[sqlite3.Row], config: Config, error: str | None
+    conn: sqlite3.Connection, group: list[sqlite3.Row], config: Config,
+    error: str | None, now: datetime,
 ) -> None:
+    """A definite failure goes back to pending, but not immediately.
+
+    Without a delay the row is re-claimed on the next drain tick -- four seconds --
+    so retry_limit=5 is spent inside 20 seconds and a brief loss of GSM registration
+    permanently fails a message that would have gone out a minute later.
+    """
     for row in group:
         attempts = row["retry_count"] + 1
-        status = "failed" if attempts >= config.notifications.retry_limit else "pending"
+        exhausted = attempts >= config.notifications.retry_limit
+        status = "failed" if exhausted else "pending"
+        next_at = None
+        if not exhausted:
+            delay = backoff_for(attempts, config)
+            next_at = (now + timedelta(seconds=delay)).isoformat(timespec="seconds")
         conn.execute(
             """UPDATE notifications
-               SET status = ?, retry_count = ?, last_error = ?, claimed_at = NULL
+               SET status = ?, retry_count = ?, last_error = ?, claimed_at = NULL,
+                   next_attempt_at = ?
                WHERE id = ?""",
-            (status, attempts, error, row["id"]),
+            (status, attempts, error, next_at, row["id"]),
         )
 
 

@@ -251,15 +251,25 @@ within an entry window.
 parameter.** This also means incident counts are sampled, not censused — every incident
 statistic is a lower bound and should be reported as such.
 
-### 18. No detector performance metrics planned
+### 18. No screening performance metrics planned
 
 Table 2 (*Controlled Environment Feature Testing*) has only Status and Remarks columns for
-four features. For a study whose novel component is a custom detector, "Working / Not working"
-is thin evidence.
+four features. "Working / Not working" is thin evidence for any of them.
 
-**Fix:** add sensitivity, specificity, and an **ROC curve** with a justified operating
-threshold, from the protocol in [hardware.md](hardware.md) §8. An ROC curve is the single
-strongest result available to this study and it costs only a structured afternoon of testing.
+**This item changed with the detector.** It previously called for sensitivity, specificity and
+an **ROC curve** from a swept threshold. That is no longer possible: the detector is now a
+**separate off-the-shelf device**, so its detection characteristics belong to the manufacturer
+and cannot be reported as findings of this study.
+
+**Fix:** report the **procedure** instead — screening coverage, alarm rate, confirmation rate,
+and handling time, all of which come out of `screening_events` directly. Add the one experiment
+that is genuinely yours: **declaration tray on versus off**, measuring alarm rate and handling
+time in each. See [hardware.md](hardware.md) §8 and
+[prohibited-items.md](prohibited-items.md) §1.
+
+**State the loss in the limitations.** A reader who knows the original design will ask what
+happened to the detector characterisation, and the honest answer — *we stopped building the
+detector, so we stopped being able to characterise it* — is far stronger than silence.
 
 ### 19. Table 2 omits the detector and the analytics
 
@@ -282,10 +292,18 @@ level.
 
 ### 21. Consistency and mechanical issues
 
-- §D and §A refer to *"automated prohibited-item detection."* The system does not automate
-  *detection of prohibited items* — it automates **metal screening**, and a human determines
-  whether an item is prohibited. This wording overclaims and is worth correcting in your own
-  interest, since it is exactly the claim a judge will probe.
+- §D and §A refer to *"automated prohibited-item detection."* **This now overclaims twice
+  over.** When the project was building its own detector, the system at least automated *metal
+  screening* while a human judged what was prohibited. With the detector replaced by a
+  **separate handheld device** ([prohibited-items.md](prohibited-items.md) §1), the system
+  automates **neither**: a person sweeps, a person inspects, a person decides, and TRACKIFY
+  records the decision.
+  What it does automate is worth claiming plainly, because it is real: **attribution** (every
+  screening binds to a scan, so no finding is ever guessed onto the wrong student), **recording**
+  (including the clears and the unscreened, which is what makes a coverage statistic honest), and
+  **custody** of collected school tools. Rewrite the phrase as *"screening records are captured
+  and attributed automatically"* or similar. This is the single most probeable sentence in the
+  plan.
 - §C opens *"The development and assessment of the **(title)** system"* — an unfilled
   placeholder.
 - §C: *"being able to be one to those students who might use harmful objects"* is garbled.

@@ -55,6 +55,9 @@ def main(argv=None) -> int:
                              "(see: python scripts/check_camera.py --list)")
     parser.add_argument("--no-camera", action="store_true",
                         help="keyboard/HID-scanner input only")
+    parser.add_argument("--custody", action="store_true",
+                        help="open the custody desk instead of the scan station "
+                             "(items held at the gate, releases, returns)")
     parser.add_argument("--provider", default="console",
                         choices=["console", "null", "gsm"],
                         help="notification provider (default: console, sends nothing)")
@@ -87,6 +90,15 @@ def main(argv=None) -> int:
     # UI-thread connection. The worker opens its own.
     conn = db.connect()
     db.init_db(conn)
+
+    # The custody desk is a teacher at a cupboard, not a queue at a gate: no camera,
+    # no SMS worker, nothing that belongs to the scan station.
+    if args.custody:
+        from trackify.ui.custody import CustodyWindow
+        window = CustodyWindow(conn)
+        window.show()
+        return app.exec()
+
     service = ScanService(conn, config)
 
     window = KioskWindow(service, windowed=args.windowed)

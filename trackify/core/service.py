@@ -17,9 +17,19 @@ from enum import Enum
 
 from ..notify import queue
 from . import qrcodes
-from .attendance import Outcome, ScanResult, fmt_time, record_scan
+from .attendance import (
+    DayClose,
+    Outcome,
+    ScanResult,
+    Trigger,
+    close_open_days,
+    fmt_time,
+    record_scan,
+)
 from .config import Config
-from .db import transaction
+from .db import audit, transaction
+from . import screening
+from .screening import Outcome as Outcome_
 from .sessions import get_school_day
 
 
@@ -43,7 +53,12 @@ class ScanPresentation:
     headline: str = ""
     detail: str = ""
     student_name: str = ""
+    student_id: int | None = None
+    # The arming scan. The screening panel needs it because a screening binds to a
+    # scan and to nothing else (flow.md Rule 2); None means there is nothing to screen.
+    scan_id: int | None = None
     section: str = ""
+    adviser: str = ""
     initials: str = ""
     photo_path: str | None = None
     time_text: str = ""
@@ -69,16 +84,27 @@ class ScanService:
     # -- lookups ------------------------------------------------------------
 
     def student_row(self, student_id: int) -> sqlite3.Row | None:
+        # LEFT JOIN on the adviser: a section between advisers must not make a student
+        # unscannable. flow.md 3 step 5 wants the adviser on screen for identity
+        # confirmation, but not at the price of the gate.
         return self.conn.execute(
-            """SELECT s.*, sec.name AS section_name, sec.grade_level
-               FROM students s JOIN sections sec ON sec.id = s.section_id
+            """SELECT s.*, sec.name AS section_name, sec.grade_level,
+                      u.full_name AS adviser_name
+               FROM students s
+               JOIN sections sec ON sec.id = s.section_id
+               LEFT JOIN users u ON u.id = sec.adviser_id
                WHERE s.id = ? AND s.active = 1""",
             (student_id,),
         ).fetchone()
 
+    def school_day(self, day: str | None = None):
+        """The configured windows for a date, creating the row on first use."""
+        day = day or datetime.now().date().isoformat()
+        return get_school_day(self.conn, day, self.config)
+
     def session_label(self, at: datetime | None = None) -> str:
         at = at or datetime.now()
-        day = get_school_day(self.conn, at.date().isoformat(), self.config)
+        day = self.school_day(at.date().isoformat())
         if not day.is_school_day:
             return day.suspension_reason or "No classes"
         return f"Gate {day.entry_open:%H:%M} - late after {day.late_threshold:%H:%M}"
@@ -145,6 +171,202 @@ class ScanService:
 
         return self._present(result, name, section, initials, student, queued)
 
+    def _adviser(self, student: sqlite3.Row) -> str:
+        adviser = student["adviser_name"]
+        return f"Adviser: {adviser}" if adviser else ""
+
+    # -- end of day ---------------------------------------------------------
+
+    def close_day(
+        self, day: str | None = None, *, at: datetime | None = None
+    ) -> DayClose:
+        """Mark absences, flag missing out-scans, queue the absence notifications.
+
+        Safe to call repeatedly. Two independent guards make it idempotent: the
+        absent-row query skips students who already have an attendance_days row for
+        the date, and idempotency_key turns a repeated enqueue into a no-op.
+
+        Notifications are queued, never sent -- the same rule as a scan. Nothing here
+        touches the modem.
+        """
+        at = at or datetime.now()
+        day = day or at.date().isoformat()
+
+        # The notification belongs to the day being closed, not to the moment the job
+        # runs. Closing a past day must not stamp today's date into the parent's text
+        # or into the idempotency key.
+        event_at = at if day == at.date().isoformat() else datetime.fromisoformat(
+            f"{day}T23:59:00"
+        )
+
+        with transaction(self.conn):
+            result = close_open_days(self.conn, day, self.config)
+            for student_id in result.absent_ids:
+                queue.enqueue(
+                    self.conn, student_id, Trigger.ABSENT, event_at, self.config
+                )
+        return result
+
+    # -- screening (docs/prohibited-items.md) --------------------------------
+
+    def record_screening(
+        self,
+        scan_id: int,
+        outcome: Outcome_,
+        *,
+        metal_detected: bool = False,
+        declared_items: str | None = None,
+        override_reason: str | None = None,
+        notes: str | None = None,
+        operator_id: int | None = None,
+        at: datetime | None = None,
+    ) -> int:
+        """Record what the operator concluded about one scan. Returns the row id.
+
+        Attendance is already committed before this is ever called -- flow.md 3 step 6:
+        the screening outcome must never affect whether attendance was recorded. This
+        method therefore cannot touch attendance_days or scan_events at all.
+
+        Re-recording an outcome for the same scan REPLACES it, because the realistic
+        sequence is a guard pressing Clear and then finding something: the correction
+        must win. The replacement is audited; the original outcome is in the audit row.
+        """
+        at = at or datetime.now()
+        if override_reason is None and outcome is Outcome_.OVERRIDDEN:
+            raise ValueError("an overridden screening requires a reason")
+
+        with transaction(self.conn):
+            existing = self.conn.execute(
+                "SELECT id, outcome FROM screening_events WHERE scan_event_id = ?",
+                (scan_id,),
+            ).fetchone()
+
+            if existing is None:
+                cur = self.conn.execute(
+                    """INSERT INTO screening_events
+                       (scan_event_id, occurred_at, metal_detected, outcome,
+                        declared_items, override_reason, notes, operator_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (scan_id, at.isoformat(timespec="seconds"), int(metal_detected),
+                     outcome.value, declared_items, override_reason, notes, operator_id),
+                )
+                return cur.lastrowid
+
+            self.conn.execute(
+                """UPDATE screening_events
+                   SET occurred_at = ?, metal_detected = ?, outcome = ?,
+                       declared_items = ?, override_reason = ?, notes = ?, operator_id = ?
+                   WHERE id = ?""",
+                (at.isoformat(timespec="seconds"), int(metal_detected), outcome.value,
+                 declared_items, override_reason, notes, operator_id, existing["id"]),
+            )
+            audit(
+                self.conn, "screening.amended",
+                actor_id=operator_id, entity_type="screening_events",
+                entity_id=existing["id"],
+                old_value=existing["outcome"], new_value=outcome.value,
+            )
+            return existing["id"]
+
+    def record_incident(
+        self,
+        screening_event_id: int,
+        student_id: int,
+        category: str,
+        item_description: str,
+        *,
+        severity: int | None = None,
+        severity_reason: str | None = None,
+        notes: str | None = None,
+        confirmed_by: int | None = None,
+        at: datetime | None = None,
+    ) -> int:
+        """A guard-confirmed prohibited item. Returns the incident id.
+
+        This is the ONLY path by which anything about a prohibited item is attached to
+        a named minor -- flow.md Rule 1. It requires a screening event, which in turn
+        requires the arming scan, so an incident can never be attributed by guesswork.
+
+        Writes the audit row and queues the guardian notification in the same
+        transaction as the incident: an incident recorded but never notified, or
+        notified but never recorded, are both worse than either alone.
+        """
+        at = at or datetime.now()
+        severity = severity if severity is not None else screening.default_severity(category)
+        screening.validate_incident(category, item_description, severity, severity_reason)
+
+        with transaction(self.conn):
+            cur = self.conn.execute(
+                """INSERT INTO incidents
+                   (student_id, screening_event_id, occurred_at, category,
+                    item_description, severity, severity_reason, notes, confirmed_by)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (student_id, screening_event_id, at.isoformat(timespec="seconds"),
+                 category, item_description.strip(), severity, severity_reason,
+                 notes, confirmed_by),
+            )
+            incident_id = cur.lastrowid
+
+            audit(
+                self.conn, "incident.recorded",
+                actor_id=confirmed_by, entity_type="incidents", entity_id=incident_id,
+                new_value=f"{category} severity {severity}",
+                reason=item_description.strip(),
+            )
+
+            # dedupe_extra keeps two incidents on the same day distinct. Without it the
+            # second would be swallowed as a duplicate of the first and no one would be
+            # told about it.
+            queue.enqueue(
+                self.conn, student_id, Trigger.INCIDENT, at, self.config,
+                dedupe_extra=f"se{screening_event_id}",
+            )
+        return incident_id
+
+    def unresolved_screenings(self, day: str | None = None) -> list[sqlite3.Row]:
+        """Screenings nobody finished. Surfaced the way unsent SMS already are.
+
+        pending_verification is an unfinished inspection, not a finding -- if these are
+        never shown to anyone they quietly accumulate and then appear in the counts as
+        though they meant something.
+        """
+        day = day or datetime.now().date().isoformat()
+        return self.conn.execute(
+            """SELECT sc.*, s.first_name, s.last_name, e.scanned_at
+               FROM screening_events sc
+               JOIN scan_events e ON e.id = sc.scan_event_id
+               JOIN students s    ON s.id = e.student_id
+               WHERE e.date = ? AND sc.outcome IN ('pending_verification', 'not_screened')
+               ORDER BY e.scanned_at""",
+            (day,),
+        ).fetchall()
+
+    def screening_coverage(self, day: str | None = None) -> dict[str, int]:
+        """Counts by outcome for one day, plus the scans nobody recorded at all.
+
+        `unrecorded` is not the same as not_screened: one is a scan the guard never
+        answered for, the other is an answer of 'nobody screened this student'. Both
+        are absences of screening and both belong in the coverage denominator.
+        """
+        counts = {
+            row["outcome"]: row["n"]
+            for row in self.conn.execute(
+                """SELECT sc.outcome, COUNT(*) AS n
+                   FROM screening_events sc
+                   JOIN scan_events e ON e.id = sc.scan_event_id
+                   WHERE e.date = ? GROUP BY sc.outcome""",
+                (day or datetime.now().date().isoformat(),),
+            )
+        }
+        counts["unrecorded"] = self.conn.execute(
+            """SELECT COUNT(*) FROM scan_events e
+               WHERE e.date = ? AND e.direction = 'in'
+                 AND NOT EXISTS (SELECT 1 FROM screening_events sc
+                                 WHERE sc.scan_event_id = e.id)""",
+            (day or datetime.now().date().isoformat(),),
+        ).fetchone()[0]
+        return counts
+
     # -- mapping domain outcome to screen state -----------------------------
 
     def _present(
@@ -153,7 +375,10 @@ class ScanService:
     ) -> ScanPresentation:
         common = {
             "student_name": name,
+            "student_id": result.student_id,
+            "scan_id": result.scan_id,
             "section": section,
+            "adviser": self._adviser(student),
             "initials": initials,
             "photo_path": student["photo_path"],
             "notifications_queued": queued,

@@ -26,6 +26,16 @@ decode_fps = 10        # decode attempts/sec; the preview itself stays at 30 fps
 absence_frames = 5
 cooldown_ms = 1500     # floor; the kiosk raises it to the current result hold time
 
+[screening]
+# Every student who scans in is screened with the separate handheld detector; the
+# outcome is recorded, INCLUDING the clears -- they are the denominator of the
+# confirmation rate. See docs/prohibited-items.md.
+enabled = true
+declared_items_hint = "phone, laptop, tablet, tumbler, coins"
+# There is no timeout. The result screen holds until the operator clicks an outcome,
+# and a scan arriving before that is refused rather than recorded. See
+# docs/prohibited-items.md section 5.
+
 [notifications]
 # in_and_out = text guardian on arrival and departure
 # exceptions_only = text only for late / absent

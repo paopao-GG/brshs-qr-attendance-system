@@ -47,6 +47,16 @@ def section(conn):
 
 
 @pytest.fixture
+def adviser(conn):
+    cur = conn.execute(
+        """INSERT INTO users (username, password_hash, role, full_name, created_at)
+           VALUES ('adviser', 'x', 'adviser', 'Tricia San Jose', ?)""",
+        (db.utcnow(),),
+    )
+    return cur.lastrowid
+
+
+@pytest.fixture
 def make_student(conn, section):
     counter = {"n": 0}
 

@@ -34,8 +34,8 @@ STUDENTS = [
     ("Rafael",     "Aquino",     1, "Delia Aquino",      "09193334444"),
     ("Camila",     "Mendoza",    1, "Rita Mendoza",      "09195556666"),
     ("Diego",      "Learner",     1, "Cely Learner",       "09197778888"),
-    # Wired to a real handset for live SMS testing. Every other number here is
-    # demo-only and must stay behind SMS_ALLOWLIST in .env.
+    # Swap this one for a real handset when you need live SMS testing. Every
+    # number here is demo-only and must stay behind SMS_ALLOWLIST in .env.
     ("Lucia",      "Domingo",    1, "Fely Domingo",      "09199990000"),
     ("Mateo",      "Castillo",   1, "Vilma Castillo",    "09201112222"),
     ("Valentina",  "Navarro",    2, "Tessie Navarro",    "09203334444"),
@@ -73,9 +73,13 @@ def main() -> int:
         # Clear rows rather than unlinking the file. On Windows the DB is often
         # still held open (OneDrive, a running kiosk), and deleting it fails with
         # a PermissionError that looks like a bug. This works regardless.
-        for table in ("risk_scores", "notifications", "attendance_days", "scan_events",
-                      "audit_log", "ahp_weights", "sms_ledger", "school_days",
-                      "students", "sections", "users"):
+        # Order matters: children before parents. incidents and custody_items point at
+        # screening_events, which points at scan_events with ON DELETE RESTRICT, so
+        # deleting scans first fails with a bare "FOREIGN KEY constraint failed".
+        for table in ("risk_scores", "incidents", "custody_items", "hazard_requests",
+                      "screening_events", "notifications", "attendance_days",
+                      "scan_events", "audit_log", "ahp_weights", "sms_ledger",
+                      "school_days", "students", "sections", "users"):
             conn.execute(f"DELETE FROM {table}")
         # No AUTOINCREMENT in the schema, so rowids restart at 1 on their own --
         # which keeps the demo QR payloads stable across resets.

@@ -360,3 +360,119 @@ def test_config_fixture_does_not_inherit_the_local_allowlist(config):
     expected a send. A developer's machine-local setting must never decide whether the
     suite passes."""
     assert config.secrets.allowlist == ()
+
+
+# --- retry backoff ----------------------------------------------------------
+
+def test_a_failure_is_not_retried_on_the_very_next_tick(conn, student, config):
+    """The gap this closes: without a delay the worker re-claims the row four seconds
+    later, so retry_limit=5 is spent inside 20 seconds and a brief loss of GSM
+    registration permanently fails a message that would have gone out a minute on."""
+    queue.enqueue(conn, student, Trigger.ARRIVAL, at(7, 0), config, direction="in")
+    backdate(conn)
+    provider = FlakyProvider([SendResult(ok=False, error="+CMS ERROR: 331")])
+
+    now = datetime.now()
+    queue.drain(conn, provider, config, breaker(conn, config), now=now)
+
+    row = conn.execute("SELECT status, retry_count, next_attempt_at "
+                       "FROM notifications").fetchone()
+    assert (row["status"], row["retry_count"]) == ("pending", 1)
+
+    # Four seconds on -- the worker's tick -- it must still be untouchable.
+    assert queue.claim_batch(conn, config, now=now + timedelta(seconds=4)) == []
+    # Past the first rung of the ladder, it is claimable again.
+    delay = config.notifications.backoff_seconds[0]
+    assert queue.claim_batch(conn, config, now=now + timedelta(seconds=delay + 1))
+
+
+def test_backoff_ladder_lengthens_then_holds_at_its_last_rung(config):
+    ladder = config.notifications.backoff_seconds
+    assert [queue.backoff_for(n, config) for n in (1, 2, 3)] == ladder[:3]
+    # Clamped, not wrapped: a long outage settles at the longest delay rather than
+    # dropping back to 30 seconds.
+    assert queue.backoff_for(len(ladder) + 5, config) == ladder[-1]
+
+
+def test_retry_limit_still_ends_in_failed(conn, student, config):
+    queue.enqueue(conn, student, Trigger.ARRIVAL, at(7, 0), config, direction="in")
+    backdate(conn)
+    provider = FlakyProvider([SendResult(ok=False, error="nope")] * 10)
+
+    now = datetime.now()
+    for attempt in range(config.notifications.retry_limit):
+        queue.drain(conn, provider, config, breaker(conn, config),
+                    now=now + timedelta(hours=attempt))
+
+    row = conn.execute("SELECT status, retry_count FROM notifications").fetchone()
+    assert row["status"] == "failed"
+    assert row["retry_count"] == config.notifications.retry_limit
+
+
+def test_a_successful_send_clears_no_backoff_because_it_never_set_one(conn, student, config):
+    queue.enqueue(conn, student, Trigger.ARRIVAL, at(7, 0), config, direction="in")
+    backdate(conn)
+    queue.drain(conn, ConsoleProvider(), config, breaker(conn, config))
+
+    row = conn.execute("SELECT status, next_attempt_at FROM notifications").fetchone()
+    assert row["status"] == "sent"
+    assert row["next_attempt_at"] is None
+
+
+# --- incident notifications -------------------------------------------------
+
+def test_incident_skips_the_coalescing_window(conn, student, config):
+    """'Please contact the school today' must not sit in a queue for three minutes."""
+    queue.enqueue(conn, student, Trigger.INCIDENT, datetime.now(), config,
+                  dedupe_extra="se1")
+    # No backdate: the row was queued a moment ago and would normally be held back.
+    claimed = queue.claim_batch(conn, config)
+    assert len(claimed) == 1
+
+
+def test_an_arrival_queued_now_is_still_held_back(conn, student, config):
+    """The contrast that proves the bypass is specific to incidents."""
+    queue.enqueue(conn, student, Trigger.ARRIVAL, datetime.now(), config, direction="in")
+    assert queue.claim_batch(conn, config) == []
+
+
+def test_incident_is_never_merged_into_a_sibling_message(conn, make_student, config):
+    """Burying 'contact the school' at the end of a cheerful arrival text loses the
+    one sentence the parent needs to act on."""
+    a = make_student(first="Juan", guardian_mobile="639171234567")
+    b = make_student(first="Maria", guardian_mobile="639171234567")
+
+    queue.enqueue(conn, a, Trigger.ARRIVAL, at(7, 0), config, direction="in")
+    queue.enqueue(conn, b, Trigger.ARRIVAL, at(7, 1), config, direction="in")
+    queue.enqueue(conn, a, Trigger.INCIDENT, at(7, 2), config, dedupe_extra="se1")
+    backdate(conn)
+
+    claimed = queue.claim_batch(conn, config)
+    bodies = [body for _, body in claimed]
+
+    incident = [b for b in bodies if "contact the school" in b]
+    assert len(incident) == 1
+    assert "arrived" not in incident[0]          # stands alone
+    assert len(claimed) == 2                     # the two siblings still merged
+
+
+def test_a_body_describing_the_item_is_refused(conn, student, config, monkeypatch):
+    """If someone 'improves' the template to be more informative, enqueue refuses it."""
+    monkeypatch.setitem(
+        queue.TEMPLATES, Trigger.INCIDENT,
+        "TRACKIFY: {first} ({section}) was found with a knife.",
+    )
+    result = queue.enqueue(conn, student, Trigger.INCIDENT, at(7, 0), config,
+                           dedupe_extra="se1")
+
+    assert not result.queued
+    assert "must not describe the item" in result.reason
+    assert conn.execute("SELECT COUNT(*) FROM notifications").fetchone()[0] == 0
+
+
+def test_idempotency_keys_are_unchanged_by_the_new_parameter(conn, student, config):
+    """Existing pending rows must not be orphaned by the dedupe_extra addition."""
+    without = queue.idempotency_key(1, Trigger.ARRIVAL, "2026-09-01", "in")
+    explicit_none = queue.idempotency_key(1, Trigger.ARRIVAL, "2026-09-01", "in", None)
+    assert without == explicit_none
+    assert without != queue.idempotency_key(1, Trigger.ARRIVAL, "2026-09-01", "in", "se1")

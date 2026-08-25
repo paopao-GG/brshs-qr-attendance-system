@@ -41,6 +41,7 @@ class Trigger(str, Enum):
     DEPARTURE = "departure"
     LATE = "late"
     ABSENT = "absent"
+    INCIDENT = "incident"
 
 
 @dataclass(frozen=True)
@@ -255,17 +256,43 @@ def _close_out(
     return row["status"]
 
 
+@dataclass(frozen=True)
+class DayClose:
+    """Result of the end-of-day job.
+
+    Absent students are returned by id rather than counted, because the caller has to
+    queue one notification per student and a count cannot do that.
+    """
+
+    absent_ids: tuple[int, ...] = ()
+    exit_missing: int = 0
+    skipped: str = ""          # non-empty when the day was not a school day
+
+    @property
+    def absent(self) -> int:
+        return len(self.absent_ids)
+
+
 def close_open_days(
     conn: sqlite3.Connection, day: str, config: Config
-) -> tuple[int, int]:
-    """End-of-day job. Returns (marked_absent, flagged_exit_missing).
+) -> DayClose:
+    """End-of-day job. Marks absences and flags missing out-scans.
 
     Students with no scan at all are marked absent and an absence notification is
     queued by the caller. Students who arrived but never scanned out get the
     exit_missing flag and NO guardian notification -- "no departure recorded for
     your child" reads as a missing-child alert and causes panic. It is an adviser
     follow-up, not a parent message.
+
+    A suspended day is refused outright. Without that check, closing a day with no
+    classes marks the ENTIRE roster absent and texts every guardian -- the single
+    worst thing this job could do, and the reason the day is removed from every
+    attendance denominator in the first place.
     """
+    school_day = get_school_day(conn, day, config)
+    if not school_day.is_school_day:
+        return DayClose(skipped=school_day.suspension_reason or "not a school day")
+
     absent_rows = conn.execute(
         """SELECT s.id FROM students s
            WHERE s.active = 1
@@ -298,4 +325,7 @@ def close_open_days(
             (_merge_flags(row["flags"], ["exit_missing"]), row["id"]),
         )
 
-    return len(absent_rows), len(missing)
+    return DayClose(
+        absent_ids=tuple(row["id"] for row in absent_rows),
+        exit_missing=len(missing),
+    )

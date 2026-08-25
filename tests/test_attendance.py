@@ -170,9 +170,9 @@ def test_scan_events_are_never_updated(conn, student, config):
 def test_no_scan_at_all_marks_absent(conn, make_student, config):
     make_student()
     make_student()
-    absent, missing = close_open_days(conn, "2026-09-01", config)
-    assert absent == 2
-    assert missing == 0
+    result = close_open_days(conn, "2026-09-01", config)
+    assert result.absent == 2
+    assert result.exit_missing == 0
     statuses = [r[0] for r in conn.execute("SELECT status FROM attendance_days")]
     assert statuses == ["absent", "absent"]
 
@@ -180,10 +180,10 @@ def test_no_scan_at_all_marks_absent(conn, make_student, config):
 def test_missing_exit_scan_is_flagged_not_texted(conn, student, config):
     """Texting a parent 'no departure recorded' reads as a missing-child alert."""
     record_scan(conn, student, at(7, 0), config)
-    absent, missing = close_open_days(conn, "2026-09-01", config)
+    result = close_open_days(conn, "2026-09-01", config)
 
-    assert absent == 0
-    assert missing == 1
+    assert result.absent == 0
+    assert result.exit_missing == 1
     flags = conn.execute("SELECT flags FROM attendance_days").fetchone()[0]
     assert "exit_missing" in flags
     # No notification rows exist -- the queue is only written by the notify layer,
@@ -194,5 +194,36 @@ def test_missing_exit_scan_is_flagged_not_texted(conn, student, config):
 def test_complete_day_is_left_alone(conn, student, config):
     record_scan(conn, student, at(7, 0), config)
     record_scan(conn, student, at(16, 0), config)
-    absent, missing = close_open_days(conn, "2026-09-01", config)
-    assert (absent, missing) == (0, 0)
+    result = close_open_days(conn, "2026-09-01", config)
+    assert (result.absent, result.exit_missing) == (0, 0)
+
+
+def test_absent_ids_are_returned_not_just_counted(conn, make_student, config):
+    """The caller has to queue one notification per student; a count cannot do that."""
+    first = make_student()
+    second = make_student()
+    result = close_open_days(conn, "2026-09-01", config)
+    assert set(result.absent_ids) == {first, second}
+
+
+def test_suspended_day_marks_nobody_absent(conn, make_student, config):
+    """The worst thing this job could do: mark a whole roster absent on a day with
+    no classes and text every guardian about it."""
+    make_student()
+    make_student()
+    suspend_day(conn, "2026-09-01", "Typhoon signal no. 2", config)
+
+    result = close_open_days(conn, "2026-09-01", config)
+
+    assert result.absent_ids == ()
+    assert "Typhoon" in result.skipped
+    assert conn.execute("SELECT COUNT(*) FROM attendance_days").fetchone()[0] == 0
+
+
+def test_closing_twice_adds_no_second_absence(conn, make_student, config):
+    make_student()
+    close_open_days(conn, "2026-09-01", config)
+    second = close_open_days(conn, "2026-09-01", config)
+
+    assert second.absent == 0
+    assert conn.execute("SELECT COUNT(*) FROM attendance_days").fetchone()[0] == 1

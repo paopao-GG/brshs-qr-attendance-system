@@ -1,10 +1,29 @@
 # TRACKIFY — Hardware
 
-Raspberry Pi 5 (4 GB) station, QR input, and the DIY coil-based bag screening box.
+Raspberry Pi 5 (4 GB) station, QR input, and SMS transport.
+
+> ## ⚠ The DIY coil detector is superseded
+>
+> **Sections 1–4, 6, 7, 9 and 10 of this document describe a detector the project is no longer
+> building.** The metal detector is now a **separate, off-the-shelf device** — a handheld wand or
+> walk-through unit operated by a person. TRACKIFY is not wired to it, cannot read it, and
+> records only what the operator judged. See
+> [prohibited-items.md](prohibited-items.md) §1 for the reasoning and what the study loses.
+>
+> **What is still live in this document:** §5 (Raspberry Pi specifics — GPIO, serial, RTC, power,
+> storage), §5's QR input and SMS transport subsections, and §8 as rewritten below.
+>
+> **Why the coil sections are kept rather than deleted.** The design work is real and correct —
+> the pulse-induction topology, the input protection, the reasoning about why a microcontroller
+> front end is unavoidable on a Pi 5 with no ADC. It belongs in the paper as an appendix
+> documenting the approach that was designed and then set aside, and *why*. Deleting it would
+> make the decision look like it never happened.
+>
+> **Do not build from §§1–4 without re-reading this notice.**
 
 ---
 
-## 1. Architecture
+## 1. Architecture *(superseded — see the notice above)*
 
 ```mermaid
 flowchart LR
@@ -69,7 +88,7 @@ not the Pico, so it can be tuned without reflashing.
 
 ---
 
-## 2. The box
+## 2. The box *(superseded)*
 
 A rigid enclosure with a flat platform. The bag is placed on the platform; the coil sits
 directly beneath it.
@@ -114,7 +133,7 @@ genuine design advantage and not a compromise:
 
 ---
 
-## 3. Coil
+## 3. Coil *(superseded)*
 
 | Parameter | Guidance |
 |---|---|
@@ -129,7 +148,7 @@ coil that measures 180 µH when you assumed 300 µH will draw far more current t
 
 ---
 
-## 4. Drive and measurement circuit
+## 4. Drive and measurement circuit *(superseded)*
 
 ### Topology: pulse induction (PI)
 
@@ -369,7 +388,7 @@ The serial port is exclusive: the kiosk and the test script cannot both hold it.
 
 ---
 
-## 6. Safety
+## 6. Safety *(superseded)*
 
 The bag-box form factor removes the largest hazard class before you start: **no person stands
 in the field.** The remaining risks are electrical and confined to the enclosure.
@@ -390,7 +409,7 @@ and generic device malfunction, and does not mention the detector at all. See
 
 ---
 
-## 7. Calibration
+## 7. Calibration *(superseded)*
 
 1. **Empty-box baseline.** With the box empty and the room in its normal state, average 1000+
    readings. Record mean and standard deviation. This is your zero.
@@ -409,58 +428,71 @@ and generic device malfunction, and does not mention the detector at all. See
 
 ---
 
-## 8. Test protocol
+## 8. Test protocol — measuring the procedure, not the instrument
 
-This is where the box earns its keep scientifically. Fixed geometry makes measurements
-**repeatable**, so you can characterize the instrument properly instead of reporting anecdotes.
+**Rewritten because the detector is no longer ours.** The previous version characterised the
+coil box: a full factorial of objects × positions × repetitions, sensitivity and specificity at a
+swept threshold, and an ROC curve this document called *"the strongest single result in the
+study."*
 
-### 8.1 Object characterization
+**That result is not available any more.** You cannot sweep a detection threshold on a device
+you did not build and whose internals the manufacturer does not publish. Sensitivity and
+specificity stop being findings about your work and become undisclosed properties of a commercial
+product. Reporting them as study results would be claiming credit for someone else's engineering.
 
-Full factorial: **objects × positions × repetitions**.
+Say so in the limitations. It is a real loss and hiding it is worse than stating it.
 
-- **Objects:** steel ruler, scissors, kitchen knife, box cutter, multi-tool, plus non-target
-  controls (phone, laptop, tablet, coins, metal tumbler, empty bag)
-- **Positions:** centre, corner, top of bag, bottom of bag, against the far wall — at minimum 5
-- **Repetitions:** ≥ 10 per combination, bag removed and replaced between trials
+### What can still be measured
 
-Record `reading_strength` for every trial. Report mean and standard deviation per cell.
+The unit of analysis moves from the **instrument** to the **procedure**: the tray, the sweep, the
+inspection, and the recording. That is a legitimate object of study — arguably a more honest one
+for a school — and every metric below comes out of `screening_events` with no extra instrumentation.
 
-### 8.2 Derived metrics
-
-| Metric | How | Feeds |
+| Metric | Definition | Why it holds up |
 |---|---|---|
-| Sensitivity (TPR) | Detected targets ÷ total target trials, at chosen threshold | docx Table 2 |
-| Specificity (1 − FPR) | Correctly-passed controls ÷ total control trials | docx Table 2 |
-| **ROC curve** | Sweep threshold across full range, plot TPR vs FPR | Strongest single result in the study |
-| Chosen threshold | Point on the ROC justified by your stated cost of a miss vs a false alarm | Configuration, defensible |
-| Repeatability | Coefficient of variation over 30 identical trials | Instrument quality |
-| Worst-case position | Cell with lowest detection rate | Honest limitation |
+| **Screening coverage** | screenings with a resolved outcome ÷ students who scanned in | The system records `not_screened` honestly, so this is a real denominator rather than an assumption |
+| **Alarm rate** | alarms ÷ screenings | A joint property of the device **and** the declaration tray. Comparing it with and without the tray is a genuine experiment you control |
+| **Confirmation rate** | `prohibited` ÷ alarms | The only false-positive measure left. This is why every `clear` is recorded — see [prohibited-items.md](prohibited-items.md) §4 |
+| **Handling time** | seconds per student, scan to release | Decides one lane or two. Measure it; do not assume it |
+| **Resolution lag** | time from `pending_verification` to a resolved outcome | How often an inspection is actually finished |
 
-An ROC curve with a justified operating point is a substantially stronger result than "the
-detector worked." It also lets you state your detection limits honestly, which reviewers
-reward.
+### 8.1 The one experiment worth running
 
-### 8.3 Operational metrics
+**Declaration tray, on versus off.** Two sessions, same lane, same operator, alternating days:
 
-- **Baseline drift** over a full school day, sampled hourly — plot it
-- **Latency per bag**, from placement to result
-- **Handling time per student**, including tray and bag placement (this is the real throughput
-  number, not the electronic latency)
+- Session A: tray in use. Session B: no tray.
+- Measure alarm rate and mean handling time in each.
 
-### 8.4 Throughput
+The predicted result is stark — nearly every student alarms without the tray, because everyone
+carries a phone — and it is the evidence for Rule 3 being mandatory rather than advisory. It also
+produces the number that decides how many lanes the school needs, which is the practical output
+the school actually wants from this study.
 
-At ~8–10 s of handling per student, a single lane screens roughly 360–450 students per hour
-**at best**, before queueing effects. Screening every student in a 30-minute entry window is
-not achievable with one box.
+**Ethical note:** run session B on a small sample, or the queue backs up into the street.
 
-The resolution is already in your research plan: it specifies **surprise inspections**, so
-screen a random sample. Set the selection rate from measured handling time and the entry
-window, and **report the rate as a study parameter**. Feeds the *Time Behavior* rows in
-docx Tables 3 and 4.
+### 8.2 Operational metrics
+
+- **Handling time per student**, including the tray, timed by hand over ≥ 30 students
+- **Queue length** at 5-minute intervals through the entry window
+- **Coverage by time of day** — coverage predictably collapses during the peak, and that is a
+  finding, not an embarrassment
+
+### 8.3 Throughput
+
+At ~5 s per student with the tray, one lane passes roughly 700 students per hour **in theory** and
+far fewer once queueing, hesitation, and the occasional inspection are counted. A 200-student
+intake in a 30-minute window fits one lane with **no slack at all**.
+
+Without the tray, the guard inspects nearly every bag at 30 s each and the same intake is
+arithmetically impossible.
+
+**Plan two lanes**, or extend the entry window and report it as a study parameter. Either way the
+decision should come from §8.1's measured numbers, not from this estimate. Feeds the
+*Time Behavior* rows in docx Tables 3 and 4.
 
 ---
 
-## 9. Bill of materials
+## 9. Bill of materials *(superseded)*
 
 Prices are rough PH street estimates for budgeting only — verify before purchasing.
 
@@ -487,7 +519,7 @@ Excludes SMS credits — see [sms-notifications.md](sms-notifications.md) §4.
 
 ---
 
-## 10. Build order
+## 10. Build order *(superseded)*
 
 Do not build the whole thing and then debug it. Each step below has a pass/fail you can check.
 

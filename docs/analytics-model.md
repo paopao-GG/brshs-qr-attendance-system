@@ -105,7 +105,10 @@ Deliberately few, and all computable at the moment of prediction:
 | Tardies in the previous 5 sessions | Tardiness often precedes absence |
 | Consecutive absences immediately prior | Captures runs, which behave differently from scattered absences |
 | Day-of-week indicator (Monday / Friday) | Well-documented attendance effect |
-| Cumulative confirmed incidents | Links the safety dimension to the attendance dimension |
+| ~~Cumulative confirmed incidents~~ | **Dropped.** Over 20 days this will be zero for
+  almost every student. A near-constant predictor carries no information, destabilises the
+  fit, and invites the obvious question of why it was included. Report incidents
+  descriptively instead — see [prohibited-items.md](prohibited-items.md) §9 |
 
 ### Is 20 days enough data?
 
@@ -331,7 +334,10 @@ Per section, grade level, and school-wide:
 - Attendance trend regression (§2) with slope CI and Durbin–Watson
 - Tardiness frequency distribution
 - Incidents by category and severity tier
-- Detector performance: TPR, FPR, and the ROC from [hardware.md](hardware.md) §8
+- Screening procedure: coverage, alarm rate, and **confirmation rate** — see
+  [prohibited-items.md](prohibited-items.md) §1. Detector TPR/FPR and an ROC curve are
+  **not available**: the detector is an off-the-shelf device, so its characteristics are
+  the manufacturer's, not a finding of this study
 - Risk band distribution
 
 For the Phase III comparison against manual attendance, report **agreement rate, discrepancy

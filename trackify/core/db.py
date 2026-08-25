@@ -43,8 +43,96 @@ def connect(db_path: Path | str | None = None) -> sqlite3.Connection:
     return cache[key]
 
 
+def ensure_columns(
+    conn: sqlite3.Connection, table: str, columns: dict[str, str]
+) -> None:
+    """Add missing columns to an existing table. Idempotent.
+
+    schema.sql is all CREATE TABLE IF NOT EXISTS, which silently does nothing when the
+    table already exists -- so a column added to the schema never reaches a database
+    that predates it. That failure is quiet and shows up later as a confusing
+    "no such column" at query time, on the deployed machine rather than here.
+
+    Additive only: SQLite cannot drop or retype a column without rebuilding the table,
+    and anything needing that deserves a real migration written by hand.
+    """
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    for name, decl in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+
+
+# Columns added after the first release. Keep the declaration identical to schema.sql.
+MIGRATIONS: dict[str, dict[str, str]] = {
+    "notifications": {"next_attempt_at": "TEXT"},
+}
+
+
+def _widen_notification_triggers(conn: sqlite3.Connection) -> bool:
+    """Allow trigger='incident' on a database created before screening existed.
+
+    This one cannot be done with ALTER TABLE. SQLite has no way to modify a CHECK
+    constraint, so widening the allowed set means rebuilding the table and copying
+    every row -- the documented 12-step procedure. Returns True if it rebuilt.
+
+    Everything here is deliberate:
+      * foreign_keys OFF around the rename, or the child tables' references would be
+        rewritten to point at the temporary table
+      * legacy_alter_table OFF (the default) so the rename does NOT rewrite references
+      * one transaction, so a crash halfway leaves the original table intact
+      * indexes recreated afterwards, because dropping the table drops them too
+    """
+    sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='notifications'"
+    ).fetchone()
+    if sql is None or "'incident'" in sql[0]:
+        return False
+
+    # The rebuilt definition must match schema.sql exactly, so a fresh database and a
+    # migrated one end up identical.
+    new_sql = sql[0].replace(
+        "'arrival', 'departure', 'late', 'absent'",
+        "'arrival', 'departure', 'late', 'absent', 'incident'",
+    ).replace("CREATE TABLE notifications", "CREATE TABLE notifications_new", 1)      .replace("CREATE TABLE IF NOT EXISTS notifications",
+              "CREATE TABLE notifications_new", 1)
+
+    columns = [r["name"] for r in conn.execute("PRAGMA table_info(notifications)")]
+    collist = ", ".join(columns)
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(new_sql)
+        conn.execute(
+            f"INSERT INTO notifications_new ({collist}) SELECT {collist} FROM notifications"
+        )
+        conn.execute("DROP TABLE notifications")
+        conn.execute("ALTER TABLE notifications_new RENAME TO notifications")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_notif_status "
+                     "ON notifications(status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_notif_guardian "
+                     "ON notifications(guardian_mobile, status)")
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    # A rebuild that broke a reference is worse than no rebuild; say so loudly.
+    broken = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if broken:
+        raise RuntimeError(
+            f"notifications rebuild left {len(broken)} broken foreign key reference(s)"
+        )
+    return True
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA.read_text(encoding="utf8"))
+    for table, columns in MIGRATIONS.items():
+        ensure_columns(conn, table, columns)
+    _widen_notification_triggers(conn)
 
 
 def close_all() -> None:
