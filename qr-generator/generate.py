@@ -463,17 +463,6 @@ def _change_rows(changes: Changes) -> list[dict]:
     return rows
 
 
-def generate(
-    rows: Iterable[StudentRow],
-    out_dir: str | Path,
-    secret: str,
-    progress: Callable[[str], None] = lambda message: None,
-) -> Summary:
-    """Plan and apply in one call, for callers that do not need a preview."""
-    changes = plan_changes(rows, out_dir, secret)
-    return apply_changes(changes, out_dir, progress)
-
-
 def _write_csv(path: Path, fields: list[str], rows: list[dict[str, str]]) -> Path:
     # utf-8-sig so Excel opens the "n"-with-tilde names correctly instead of mojibake.
     with open(path, "w", newline="", encoding="utf-8-sig") as handle:

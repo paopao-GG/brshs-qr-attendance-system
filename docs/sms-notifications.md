@@ -43,7 +43,7 @@ Two of those lines are the whole argument. The cost difference is the study's en
 budget, and **the privacy position genuinely improves**: guardian numbers and student
 identifiers no longer leave the campus for a third party. The earlier draft listed that
 disclosure as a cost that "cannot be handled technically — it has to be disclosed". It no
-longer has to be, and [research-plan-review.md](research-plan-review.md) item 8 should be
+longer has to be, and [research-plan-review.md](research-plan-review.md) item 4 should be
 updated to say so.
 
 ### The honest statement of the limitation
@@ -159,13 +159,22 @@ At ₱0.50 per message, for 200 students over the 20-day deployment:
 | **Exception-only** (recommended) | ~600–700 | **₱300–350** | Absences, lates, confirmed incidents |
 | Exception-only + weekly digest | ~1,400 | **₱700** | Adds a Friday summary per student |
 
-**Recommend exception-only.** It is roughly a 90% cost reduction, and it is also better
-product design: a daily "your child arrived on time" text is ignored within a week, and once
-parents are ignoring the messages, the absence notification gets ignored too. Scarcity is what
-makes the absence alert land.
+**The cost table above is pre-module and now mostly historical.** With a SIM800C on a school
+SIM the marginal cost is a load top-up, not ₱0.50 a message — §1 puts it at **≈ ₱0** after the
+hardware. What the table still measures correctly is *attention*, and that is the real
+constraint.
 
-Make the policy **configurable and per-guardian opt-in**, and log the policy in force so it can
-be reported alongside results.
+**The argument for exception-only stands on product grounds.** A daily "your child arrived on
+time" text is ignored within a week, and once parents are ignoring the messages the absence
+notification gets ignored too. Scarcity is what makes the absence alert land.
+
+**`config.toml` currently ships `policy = "in_and_out"`**, which texts on arrival and
+departure. That is the right default for a *pilot*, where the point is to demonstrate the
+system working and to catch wrong numbers early, and the wrong default for a term — switch to
+`exception_only` before the 20-day run. The policy in force is configuration, so it can be
+reported alongside the results.
+
+Per-guardian opt-out already exists (`students.notify_optin`) and is checked at enqueue.
 
 ---
 
@@ -173,12 +182,21 @@ be reported alongside results.
 
 Keep every message inside **160 characters** so it bills as one credit.
 
-| Trigger | Template |
-|---|---|
-| Absence | `TRACKIFY: {first_name} ({section}) was not recorded present for {session} on {date}. Please contact the school if this is unexpected.` |
-| Late | `TRACKIFY: {first_name} ({section}) arrived late at {time} on {date}.` |
-| Confirmed incident | `TRACKIFY: A school policy matter involving {first_name} ({section}) was recorded on {date}. Please contact {adviser} or the school office.` |
-| Weekly digest | `TRACKIFY weekly: {first_name} ({section}) - present {p}/{t} sessions, {l} late. Full report available from the class adviser.` |
+Verbatim from `trackify/notify/queue.py`. Every one has been sent from the module to a live
+handset and fits a single GSM-7 segment.
+
+| Trigger | Template | Chars |
+|---|---|---|
+| `arrival` | `TRACKIFY: {first} ({section}) arrived {time} on {date}.` | 64 |
+| `late` | `TRACKIFY: {first} ({section}) arrived late at {time} on {date}.` | 72 |
+| `departure` | `TRACKIFY: {first} ({section}) left school {time} on {date}.` | 68 |
+| `absent` | `TRACKIFY: {first} ({section}) was not recorded present on {date}. Please contact the school if unexpected.` | 114 |
+| `incident` | `TRACKIFY: Please contact the school today regarding {first} ({section}).` | 76 |
+| `summary` | `TRACKIFY: {first} ({section}) week of {period}: present {present}, late {late}, absent {absent} of {days} school days.` | 98 |
+| `reminder` | `TRACKIFY: {first} ({section}): {absent} absences in {period}. {clause} Please contact the school if there is a difficulty at home.` | 146 |
+
+`{first}` is the **first name only** — not the full name, and never the LRN. `summary` and
+`reminder` are periodic rather than event-driven; see §5.1.
 
 **Incident messages deliberately say nothing specific.** SMS is not a secure channel — it is
 unencrypted, and it goes to a handset that may be shared, lost, or read by someone else. Naming
@@ -232,33 +250,65 @@ rather than `₱500`. Write templates in a plain-text editor, never Word.
 
 ## 7. Configuration and secrets
 
+There is **no API key** — the transport is a module on a serial port, not a web service. Two
+secrets, both environment-only:
+
 ```
-SEMAPHORE_API_KEY=...
-SEMAPHORE_SENDER_NAME=...
-NOTIFICATION_POLICY=exception_only
-NOTIFICATION_RETRY_LIMIT=5
+# .env  -- gitignored, never committed
+TRACKIFY_QR_SECRET=...        # HMAC key for QR payloads
+SMS_ALLOWLIST=09171234567     # comma-separated; see below
 ```
 
-- API key from **environment variables only.** Never a literal in source, never in a committed
-  config file.
-- `.env` in `.gitignore` from the first commit. A key committed once is compromised even after
-  it is removed — git keeps history.
-- Commit a `.env.example` with empty values so the required variables are documented.
-- Keep separate keys for development and deployment if the provider allows it.
+Behaviour lives in `config.toml`, not the environment:
+
+```toml
+[notifications]
+policy = "in_and_out"           # or exception_only
+coalesce_window_minutes = 3
+retry_limit = 5
+backoff_seconds = [30, 120, 600, 1800, 3600]
+weekly_summary = true
+absence_reminders = true
+monthly_absence_limit = 3
+absence_warn_at = 2
+
+[limits]
+daily_message_cap = 1000
+per_recipient_daily_cap = 6
+requests_per_second = 2
+```
+
+**`SMS_ALLOWLIST` is the control that makes live testing safe.** With the real transport
+pointed at a roster of real guardian numbers, one mistake texts a stranger's parent. When the
+allowlist is populated, only those numbers can be reached and everything else is marked
+`suppressed` with the reason recorded.
+
+**It restricts nothing when empty.** That is deliberate — a school in production must not have
+to enumerate 71 numbers — but it means the allowlist cannot be the only guard. The consent
+check in `queue.enqueue` is the one that travels with the database.
+
+`.env` has been in `.gitignore` from the first commit. A secret committed once is compromised
+even after removal, because git keeps history.
 
 ---
 
 ## 8. Failure modes
 
+The internet is no longer in this path at all. What replaced it:
+
 | Failure | Behaviour | Visibility |
 |---|---|---|
-| No internet | Queue holds `pending`, retries with backoff | Unsent count on dashboard |
-| API returns an error | Retry to limit, then `failed` | Unsent count + log |
-| Out of credits | All sends fail | **Add a low-balance check to the daily startup routine** — silently running out mid-deployment is the realistic way this breaks |
-| Invalid/dead number | Provider rejects; marked `failed` | Flagged for adviser to correct at source |
-| Worker crash | Pending rows survive in SQLite; resume on restart | Idempotency key prevents double-send |
-| Sender name not yet approved | Sends go out under provider default | Check before deployment day |
-| Message exceeds 160 chars | Splits, bills double | Caught by the pre-enqueue validator (§5) |
+| **Module unplugged or not answering** | The queue is **not drained**. Rows stay `pending` with `retry_count` untouched and go out on the first pass after it returns | Status bar reads `SMS: gsm unavailable`, amber, reason on hover |
+| **Wrong serial port** (on Windows, usually Bluetooth) | A 2-second `AT` probe fails it fast instead of spending `init_timeout` on each of ~13 commands | Same amber indicator, within seconds |
+| **Brownout mid-send** | The transmit burst pulls ~2A against a USB port's 0.5-0.9A. Reported `ambiguous` and parked `unknown` — **never auto-retried** | Unsent count; a human reconciles |
+| **Silence after Ctrl-Z** | The message may already have reached the SMS centre. Same at-most-once rule: `unknown`, not a retry | Unsent count |
+| SIM not registered / no load / blank SMSC | `health().blocker()` names the one thing wrong before the body is written, so the refusal is unambiguous and safe to retry later | Send result, and `scripts/test_sms.py --check` |
+| Module answers and says ERROR | Definite failure. Retry to limit with backoff, then `failed` | Unsent count |
+| Worker crash mid-send | Claimed rows survive as `sending`; `reconcile_stale` marks them `unknown` on restart rather than resending | Alarm on next launch |
+| Daily spend cap reached | `SpendBreaker` trips; further sends `suppressed` | `SMS: HALTED`, latched until restart |
+| Recipient not on `SMS_ALLOWLIST` | `suppressed` with the number in the reason | Queue monitor |
+| No consent on file | Refused at enqueue; no row is written at all | Returned reason, counted in the summary run |
+| Body would exceed one segment | Refused **at enqueue**, not at send — failing at double cost on every retry is worse than failing once | Returned reason |
 
 ---
 
@@ -269,11 +319,52 @@ NOTIFICATION_RETRY_LIMIT=5
    end to end without texting anyone
 3. Live send to **your own number** for every template
 4. Character-set validator unit tests, including a template pasted from Word with smart quotes
-5. Pull the network cable mid-session — confirm rows stay `pending`, confirm they flush on
-   reconnect, confirm nothing is lost or duplicated
-6. Kill the worker mid-send — confirm no duplicate on restart
-7. Confirm the low-credit warning fires
+5. **Unplug the module mid-session** — confirm the status bar goes amber within seconds,
+   confirm rows stay `pending` with `retry_count` unchanged, confirm they flush when it is
+   plugged back in
+6. Kill the worker mid-send — confirm no duplicate on restart (the row becomes `unknown`)
+7. Confirm `scripts/test_sms.py --check` reports supply voltage; a laptop USB port will read
+   fine at idle and still brown out on the transmit burst
 8. Verify guardian numbers for the pilot section against school records **before** the first
    live send
 
 Step 5 and step 8 are the two that matter most. Everything else is recoverable.
+
+---
+
+## 10. Where this lives
+
+| Piece | File |
+|---|---|
+| Provider abstraction, Console and Null | `trackify/notify/provider.py` |
+| SIM800C over AT commands, health, availability | `trackify/notify/gsm.py` |
+| GSM-7 alphabet, segment counting, truncation | `trackify/notify/gsm7.py` |
+| Enqueue, claim, drain, retry, idempotency | `trackify/notify/queue.py` |
+| Sibling coalescing into one message | `trackify/notify/coalesce.py` |
+| Spend breaker, token bucket, allowlist | `trackify/notify/limits.py` |
+| Weekly summary and absence reminder | `trackify/notify/periodic.py` |
+| The drain worker on its own thread | `trackify/ui/worker.py` |
+| Staged live bring-up | `scripts/test_sms.py` |
+
+### 5.1 Periodic messages
+
+Two shapes, deliberately different.
+
+**The weekly summary** is a batch. Every consenting guardian gets one message covering the
+school week — including a week of perfect attendance, because most parents never hear from a
+school unless something is wrong. It is sent when someone presses **Send weekly summaries** on
+the records screen, never automatically: seventy-odd texts leaving at once is an event a person
+should decide, and the dialog shows the count before anything is queued. Pressing it twice
+queues nothing the second time; the week is in the idempotency key.
+
+**The absence reminder** is one student crossing a threshold, sent the day it happens. It rides
+the end-of-day close, where the absence is detected and where the absence notification already
+goes out. It fires at exactly two counts — `absence_warn_at` and `monthly_absence_limit` — and
+then goes quiet. A text on every further absence is nagging, and by then the conversation
+belongs to a person.
+
+Neither names a consequence. "Please contact the school" is the whole ask; what follows is the
+school's decision, not an SMS template's.
+
+An **excused** absence does not count toward the limit. A corrected day is read at its
+corrected value, so a parent is never warned about an absence an adviser has already excused.

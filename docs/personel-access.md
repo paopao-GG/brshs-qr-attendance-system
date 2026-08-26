@@ -26,11 +26,15 @@ password  ── wrong ──▶ refused, 5 tries then locked for a minute
         ▼
 register for one section, one month
         │
-        ├── click a day     ─▶ correct it (type, reason, your name)
-        ├── Edit log        ─▶ every change ever made to this section
-        ├── Student roster  ─▶ import, edit and deactivate students (section 9)
-        ├── Export XLSX     ─▶ the same grid as a spreadsheet
-        └── Close           ─▶ back to the gate
+        ├── click a day             ─▶ correct it (type, reason, your name)
+        ├── Edit log                ─▶ every change ever made to this section
+        ├── Student roster          ─▶ import, edit and deactivate students (section 9)
+        ├── Class suspension        ─▶ excuse a whole section for a date
+        ├── Send weekly summaries   ─▶ queue one attendance text per guardian
+        ├── Export XLSX             ─▶ the same grid as a spreadsheet
+        ├── Export analytics        ─▶ six-sheet workbook: trend, risk, AHP, screening
+        ├── Change password         ─▶ rotate the shared password
+        └── Close                   ─▶ back to the gate
 ```
 
 The button sits on the **waiting screen only** — never over a result. [flow.md](flow.md) §8 says
@@ -59,7 +63,7 @@ an unverified claim indistinguishable from an authenticated one, which is precis
 an audit trail exists to prevent.
 
 **State this as a limitation in the paper.** It is a small and honest one. Individual logins
-(build step 14) are what would close it.
+are what would close it; they are not built.
 
 ### The password itself
 
@@ -146,7 +150,9 @@ shape of the SF2 register the school already uses on paper.
 
 ```
  Attendance register                                 8-Bonifacio  ·  August 2026
- Section [8-Bonifacio] [August] [2026]   [Edit log] [Suspension] [Export XLSX] [Close]
+ Section [8-Bonifacio] [August] [2026]
+ [Edit log] [Student roster] [Class suspension] [Change password]
+ [Send weekly summaries] [Export analytics] [Export XLSX] [Close]
  ✓ present   L late   ✗ absent   E excused   O online   shaded = set by a person
  ─────────────────────────────────────────────────────────────────────────────
                     3  4  5  6  7 ... 13 14        P    L    A    E    Rate
@@ -230,7 +236,9 @@ never a half-finished form to discard.
 | Reading the school's spreadsheet | `trackify/core/roster.py` |
 | The roster screen and its dialogs | `trackify/ui/roster.py` |
 | Password hashing, change, and the attempt lockout | `trackify/core/security.py` |
-| XLSX export | `trackify/export/xlsx.py` |
+| XLSX register export | `trackify/export/xlsx.py` |
+| The analytics workbook | `trackify/export/analytics.py` |
+| Weekly summaries and the absence reminder | `trackify/notify/periodic.py` |
 | Register, edit log, and all the dialogs | `trackify/ui/records.py` |
 | The button, and the gate-wins rule | `trackify/ui/kiosk.py` |
 

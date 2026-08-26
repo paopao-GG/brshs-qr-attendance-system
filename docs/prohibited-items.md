@@ -34,7 +34,7 @@ person decided.**
 
 ### The cost, stated plainly
 
-[hardware.md](hardware.md) §8.2 called the detector's **ROC curve** *"the strongest single result
+[hardware.md](hardware.md) §8 called the detector's **ROC curve** *"the strongest single result
 in the study."* **That result is gone.** You cannot sweep a detection threshold on a device you
 did not build, so sensitivity, specificity, and repeatability stop being findings about your work
 and become undisclosed properties of a commercial product.
@@ -62,8 +62,11 @@ why.
 
 ## 2. Who is screened
 
-**Every student who scans in.** This is a change from [flow.md](flow.md) Rule 4, which specified a
-random sample because the coil box handled one bag at a time at 8–10 seconds each.
+**Every student who scans in.** This reversed an earlier design that specified a random sample,
+because the coil box handled one bag at a time at 8–10 seconds each. A handheld detector does
+not have that constraint. [flow.md](flow.md) Rule 4 has since been rewritten to match, so the
+two documents now agree — but the reversal is recorded here because it changed what the study
+reports: there is no selection rate, and incident counts are a census rather than a sample.
 
 Screening everyone makes the **declaration tray mandatory**, not advisory. The arithmetic is not
 close:
@@ -79,7 +82,7 @@ waving people through — flow.md's own warning that the system becomes *worse t
 all*. With the tray, one lane fits a 200-student intake with **no margin for a queue**.
 
 **Plan for two lanes**, or state an extended entry window as a study parameter and report it.
-Measure handling time on the real gate before committing to either (§8, verification 9).
+Measure handling time on the real gate before committing to either ([hardware.md](hardware.md) §8).
 
 ---
 

@@ -9,7 +9,10 @@ Companion documents:
 
 | Document | Covers |
 |---|---|
-| [hardware.md](hardware.md) | Raspberry Pi 5, the DIY coil detector box, wiring, safety, test protocol |
+| [TDD.md](TDD.md) | Technical Design Document — architecture, data model, module map, interfaces |
+| [prohibited-items.md](prohibited-items.md) | Screening at the gate: outcomes, incidents, custody, why incidents are not weighted |
+| [personel-access.md](personel-access.md) | The records screen: password gate, corrections, roster import, exports |
+| [hardware.md](hardware.md) | Raspberry Pi 5, camera and GSM bring-up. Its detector sections describe hardware the project no longer builds |
 | [analytics-model.md](analytics-model.md) | Attendance rate, regression, AHP weighting, composite risk score |
 | [sms-notifications.md](sms-notifications.md) | GSM-module SMS transport, queueing, message templates, privacy |
 | [research-plan-review.md](research-plan-review.md) | Corrections needed in `RESEARCH-PLANCURRENT.docx` |
@@ -157,7 +160,7 @@ flow waits on the network.
 
 ```mermaid
 flowchart TD
-    A[Event: arrival, departure, late, or absence] --> B[Write row to notifications, status=pending]
+    A[Event: arrival, departure, late, absence, incident, summary or reminder] --> B[Write row to notifications, status=pending]
     B --> C[Background worker claims rows past the coalescing window]
     C --> D{Module registered on the network?}
     D -->|No| E[Leave pending; increment retry_count]
@@ -326,7 +329,11 @@ above needs to exist.
 
 `id` · `student_id` · `date` · `entry_scan_id` · `exit_scan_id` ·
 `status` (present / late / absent / excused / online) · `flags` · `minutes_on_campus` ·
-`superseded_by` · `corrected_by` · `correction_reason`
+`superseded_by` · `corrected_by` · `corrected_by_name` · `correction_reason` ·
+`correction_type` · `created_at`
+
+`corrected_by_name` carries the typed, **unverified** name: one shared password cannot prove
+who, so `corrected_by` stays NULL and the claim is recorded as a claim. See §4.2.
 
 > **Why two tables and not one.** §4.2 requires that an original record is never overwritten
 > and that a correction supersedes it. One table cannot hold both an immutable observation and
@@ -384,7 +391,8 @@ rule and why an overlapping list would have made the category counts unusable.
 > an expected event rather than a judgement call at the cupboard.
 
 ### `notifications`
-`id` · `student_id` · `guardian_mobile` · `trigger` (arrival / departure / late / absent) ·
+`id` · `student_id` · `guardian_mobile` ·
+`trigger` (arrival / departure / late / absent / incident / summary / reminder) ·
 `idempotency_key` **unique** · `body` · `status` · `retry_count` · `provider_message_id` ·
 `coalesce_group` · `last_error` · `event_at` · `queued_at` · `claimed_at` ·
 `next_attempt_at` · `sent_at`
@@ -402,13 +410,14 @@ rule and why an overlapping list would have made the category counts unusable.
 > 4pm departure into one nonsensical message.
 
 ### `audit_log`
-`id` · `actor_id` · `action` · `entity_type` · `entity_id` · `old_value` · `new_value` ·
-`reason` · `occurred_at`
+`id` · `actor_id` · `actor_name` · `action` · `entity_type` · `entity_id` · `old_value` ·
+`new_value` · `reason` · `occurred_at`
 
 > A station identifier belongs here once there is more than one station — that is a V2
 > concern, and V1 is a single kiosk on one machine. The table exists and is written by
-> `db.audit()`; it stays empty until corrections and login land, because until there is an
-> account there is no actor to record.
+> `db.audit()` from corrections, roster imports, screening amendments and every custody
+> transition. `actor_id` is usually NULL and `actor_name` holds a typed, unverified claim,
+> because one shared password authenticates a role rather than a person.
 
 ---
 
@@ -420,10 +429,10 @@ Mapping each feature in research question 1 of the research plan to where it liv
 |---|---|---|
 | QR code-based school identification for attendance | §3 steps 2–5 | Built |
 | Real-time and automated attendance logging | §3 step 6; §5.5 | Built |
-| Automated attendance **reporting** | §4.3; [personel-access.md](personel-access.md) | Partly built — the section register and its XLSX export exist; the statistical summary does not |
-| Recording of verified prohibited-item incidents in the student's profile | §3 steps 10–14; Rule 1; [prohibited-items.md](prohibited-items.md) | Designed; being built. The detector itself is now **a separate device**, so the system records a guard's judgement rather than a sensor reading |
+| Automated attendance **reporting** | §4.3; [personel-access.md](personel-access.md) | Built — the SF2-shaped section register with its XLSX export, plus a six-sheet analytics workbook |
+| Recording of verified prohibited-item incidents in the student's profile | §3 steps 10–14; Rule 1; [prohibited-items.md](prohibited-items.md) | Built — screening outcomes, incidents and the full custody chain. The detector is **a separate device**, so the system records a guard's judgement rather than a sensor reading |
 | SMS notifications to parents/guardians | §3 step 16; §4.1 | Built |
-| Statistical summary of attendance data | §4.3; [analytics-model.md](analytics-model.md) | Not yet built |
+| Statistical summary of attendance data | §4.3; [analytics-model.md](analytics-model.md) | Built — trend regression, pooled absence model, AHP weights, composite risk with band floors, screening procedure metrics |
 | Editable reports for excused absence, online participation, class suspension | §4.2; [personel-access.md](personel-access.md) | Built — all four correction types, each superseding rather than overwriting, each audited |
 
 The status column is deliberately part of this table. A traceability matrix that does not say
@@ -441,7 +450,7 @@ what is finished tells the reader nothing they can check.
 - Risk scores are visible to **guidance and administrators only.**
 - **Guardian mobile numbers no longer leave the school's own equipment.** The original design
   posted them to a third-party SMS API, which had to be disclosed in the consent form and in §F
-  of the research plan — see [research-plan-review.md](research-plan-review.md), item 8. With
+  of the research plan — see [research-plan-review.md](research-plan-review.md), item 4. With
   the GSM module the numbers go from the local database to a SIM in a box on the premises and
   out over the cellular network, exactly as a staff member texting from a school phone would.
   No third party holds a copy. The disclosure should be corrected rather than deleted: the

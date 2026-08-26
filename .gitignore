@@ -2,7 +2,18 @@
 .env
 
 # Data
-# student-info.xlsx
+# The roster: 124 real minors' LRNs, parent names, mobile numbers and emails.
+# Sensitive personal information under RA 10173. It was tracked once by accident
+# (this line was commented out) and reached a public GitHub repo; the history has
+# since been rewritten to remove it. It must stay in the working tree -- seed_demo.py
+# reads it -- but it must never be committed again.
+student-info.xlsx
+
+# Register exports. The Export dialog defaults to the repo root, and accepting that
+# default once put a file of real student names into a commit.
+attendance-*.xlsx
+trackify-analytics-*.xlsx
+
 *.db
 *.db-wal
 *.db-shm

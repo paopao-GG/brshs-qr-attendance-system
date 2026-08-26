@@ -52,14 +52,23 @@ should be *"Campus Safety"* throughout — and close the missing space in
 the metal detector — no electrical hazard, no coil energy, no false-positive consequences, no
 handling of a device that will be operated near students by school staff.
 
-This is the section a safety reviewer reads first, and the omission is conspicuous given that
-the study's distinguishing feature is a custom-built detector.
+This is the section a safety reviewer reads first.
 
-**Fix:** add the risks and mitigations from [hardware.md](hardware.md) §6 — coil node voltage
-and enclosure, MOSFET flyback, sacrificial front end protecting the Pi, isolated 12 V supply,
-lid interlock, and the fact that **no person enters the field** because the bag-box form factor
-confines it to the enclosure. That last point is a genuine strength and should be stated
-explicitly rather than left for a reviewer to wonder about.
+**This item changed with the detector.** It previously prescribed the electrical risks of the
+DIY coil box — coil node voltage, MOSFET flyback, isolated 12 V supply, lid interlock. That box
+was deferred and those risks no longer exist; hardware.md §6 is marked superseded and must not
+be quoted into the plan.
+
+**Fix:** §F now needs the risks of a **handheld detector operated by a person near students**,
+which are procedural rather than electrical:
+
+- **False alarm on an innocent student.** The mitigation is architectural — see item 4.
+- **Handling and search dignity.** A bag check is a search; who may conduct one, in whose
+  presence, and what a student may refuse.
+- **Device failure mid-session**, and what the gate does when the detector stops working
+  (recorded as `not_screened`, which is a deliberate outcome, not missing data).
+- **Battery and calibration** — an unpowered detector that appears to work is worse than one
+  that visibly does not.
 
 Add one more risk not currently anywhere in the document: **false accusation.** A detector
 alarm on an innocent student is a real harm. The mitigation is architectural — see item 4.
@@ -121,6 +130,9 @@ hand with extra steps.
 - Use **three criteria, not two.** A 2×2 pairwise matrix is always perfectly consistent by
   construction, so CR = 0 regardless of the inputs and the check proves nothing. At n = 3 it
   becomes meaningful. Worked example in [analytics-model.md](analytics-model.md) §5.
+
+
+**RESOLVED.** The panel was convened and the judgements recorded: `ahp_weights` version 1, elicited from the guidance counsellor and discipline officer, 27 August 2026, with a consistency ratio of **0.0212** (well inside the 0.10 limit). The matrix and the derivation are in [analytics-model.md](analytics-model.md) §5.1, and every export now names the source instead of warning that the weights are a placeholder.
 
 ---
 
@@ -237,19 +249,30 @@ Phase I says data will be *"gathered from the located prohibited item"* but neve
 items are located, by what instrument, with what accuracy, or who makes the determination. A
 reader cannot reproduce the method as written.
 
-**Fix:** add the instrument description, the declare-first protocol, the random sampling design,
-and — most importantly — that **the detector triggers review and a human decides.** Source
-material in [hardware.md](hardware.md) §2–§4 and [flow.md](flow.md) §2.
+**Fix:** add the instrument description (a handheld detector, make and model), the declare-first
+protocol, the **universal** screening basis, and — most importantly — that **the detector
+triggers review and a human decides.** Source material in
+[prohibited-items.md](prohibited-items.md) §1-§6 and [flow.md](flow.md) §2. Not hardware.md
+§2-§4, which describe the deferred coil box.
 
-### 17. Screening is described as universal; it should be sampled
+### 17. Screening basis must be stated explicitly — RESOLVED, and reversed
 
-§D refers to *"surprise inspections,"* which implies sampling, but §E reads as though every
-student is screened. At realistic handling times a single station cannot screen every student
-within an entry window.
+§D refers to *"surprise inspections,"* which implies sampling, while §E reads as though every
+student is screened. The plan needs to say which.
 
-**Fix:** state the random selection design explicitly and report the **selection rate as a study
-parameter.** This also means incident counts are sampled, not censused — every incident
-statistic is a lower bound and should be reported as such.
+**This item reversed when the detector changed.** It previously argued for a random sample,
+because the coil box handled one bag at a time at 8-10 seconds each and a single station could
+not clear an entry queue. A handheld detector does not have that constraint, so the system
+now screens **every student who scans in**, and records the outcome **including the clears** —
+they are the denominator of the confirmation rate.
+
+**Fix:** state universal screening in §E, and drop the sampling language from §D. Do **not**
+report a selection rate; there is no selection. Incident counts are a census of what was found,
+not a sample, though they remain a lower bound on what was *carried* — a detector responds to
+metal, and a human decides what is prohibited.
+
+Implemented: `config.toml [screening]`, [prohibited-items.md](prohibited-items.md) §2,
+[flow.md](flow.md) Rule 4.
 
 ### 18. No screening performance metrics planned
 

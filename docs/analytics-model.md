@@ -179,8 +179,9 @@ Three, not two:
 
 The school's **guidance counsellor and discipline officer**, not the researcher. Record the
 session: who participated, when, and the raw matrix. This is expert elicitation and it is what
-makes the weights defensible rather than arbitrary. The research plan does not currently name a
-source for these judgements — see [research-plan-review.md](research-plan-review.md), item 10.
+makes the weights defensible rather than arbitrary. The research plan did not originally name a
+source for these judgements — see [research-plan-review.md](research-plan-review.md), item 6,
+now resolved by the elicitation recorded in §5.1.
 
 ### Method
 
@@ -248,6 +249,13 @@ ahp.save(conn, ((1, 5, 4), (1/5, 1, 1/2), (1/4, 2, 1)),
          elicited_at="2026-08-27")
 conn.commit()
 ```
+
+### 5.2 The illustrative derivation, worked through
+
+Everything below derives the **illustrative** matrix of §5, not the adopted weights of §5.1.
+It is kept because it shows the arithmetic on numbers that are easy to check by hand, and
+because `tests/test_ahp.py` asserts these figures to four decimal places. **Do not report
+these as the study's weights** — §5.1 has those.
 
 Row geometric means:
 
@@ -356,6 +364,13 @@ Risk = 0.1884 × 0.42  +  0.0810 × 0.4512  +  0.7306 × 0.3935
      = 0.4031
 ```
 
+> **This example uses the illustrative weights of §5.2, not the adopted ones.** It is the
+> arithmetic that `tests/test_risk.py` pins to four decimal places, so the worked example and
+> the code cannot drift apart. Under the **adopted** weights of §5.1
+> (`w_A = 0.6833`, `w_T = 0.1168`, `w_E = 0.1998`) the same student scores
+> `0.6833 × 0.42 + 0.1168 × 0.4512 + 0.1998 × 0.3935 = 0.4183` — also Monitor, by a
+> different route: absence now carries the score instead of early departure.
+
 → **0.40, Monitor band.** `tests/test_risk.py` asserts these figures to four decimal
 places, so this example and the code cannot drift apart silently.
 
@@ -385,9 +400,13 @@ records which rule decided it.
 | Elevated | 0.55 – 0.74 | Adviser referral; parent conference per DepEd guidance |
 | High | 0.75 – 1.00 | Guidance referral; documented intervention plan |
 
-**These cutoffs are placeholders and must be set by the school.** A band boundary determines
-whether a real student is referred; that is an institutional decision, not a researcher's.
-Record who set them and when.
+**A band boundary determines whether a real student is referred; that is an institutional
+decision, not a researcher's.** `config.toml` records who set the cutoffs and when
+(`[risk.bands] set_by`, `set_on`), and every export prints that attribution. Left blank — as on
+a fresh install — the export says the cutoffs are placeholders instead, which is what an
+unattributed cutoff is.
+
+In force: set by the guidance counsellor and discipline officer, 27 August 2026.
 
 ### The incident floor
 
@@ -472,8 +491,10 @@ otherwise ask.
 4. **Detector cannot classify.** It responds to metal, not to prohibited items. Every reported
    incident passed human verification; detection metrics measure the *instrument*, not the
    system's accuracy at identifying contraband.
-5. **Random screening means incident counts are sampled**, not censused. A student's incident
-   total is a lower bound. Report the selection rate alongside any incident statistic.
+5. **Incident counts are a census of what was found, not of what was carried.** Screening is
+   universal — every student who scans in is screened — so there is no selection rate to
+   report. But a detector responds to metal and a person decides what is prohibited, so a
+   student's incident total remains a lower bound on what actually passed the gate.
 6. **Autocorrelation** in the daily time series inflates the apparent significance of the trend
    slope (§2).
 7. **Class imbalance** if absences are rare; accuracy is the wrong metric (§4).
@@ -493,9 +514,39 @@ otherwise ask.
 | Screening and incident counts (descriptive) | `trackify/analytics/screening.py` |
 | The workbook | `trackify/export/analytics.py` |
 | The button | `trackify/ui/records.py` — *Export analytics* |
+| Demonstration data | `scripts/simulate_term.py` |
 
 `mu_tardiness`, `nu_early_departure` and the band cutoffs are read from `config.toml`, never
 hardcoded.
+
+### Where the numbers in the current export came from
+
+**The attendance in the database is simulated.** `scripts/simulate_term.py` generated it —
+ten school days, 103 students, absence archetypes, Monday and Friday effects, a rainy Tuesday.
+Everything the analytics report about it is therefore an output of that simulator, not an
+observation:
+
+| Sheet | What is currently in it |
+|---|---|
+| Trend | a slope, R², p-value, confidence interval and Durbin–Watson over invented daily rates |
+| Risk | 103 composites and bands over invented attendance |
+| Model | precision, recall and AUC from a model fitted to invented absences |
+| Screening | coverage, alarm rate and confirmation rate over invented screenings |
+
+**None of it may be reported as a finding.** The script prints that warning on every run and
+records it in `app_settings['simulated_data']`, but the exported workbook carries no watermark,
+so nothing on the face of the file distinguishes it from real data.
+
+Clear it before the pilot:
+
+```
+python scripts/simulate_term.py --clear
+```
+
+The design is deliberately honest about the *shape* of what it generates — the model reports
+AUC ≈ 0.5 when the absences really are random, and no long-run trend is baked in, so the
+regression reports "no significant trend" rather than a manufactured result. That makes it a
+good test of the analytics. It does not make it evidence.
 
 ### What the export does when there is no data
 

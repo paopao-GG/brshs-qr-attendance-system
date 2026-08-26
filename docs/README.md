@@ -3,8 +3,8 @@
 **Tracker for Real-time Attendance and Campus safety, Keeping Intelligent Feedback for Yielding reports**
 
 QR-based attendance monitoring, campus-safety incident recording, and predictive risk analytics
-for a secondary school. Deployed on a Raspberry Pi 5 (4 GB) with a custom coil-based bag
-screening box, evaluated over a 20-day school run.
+for a secondary school. Deployed on a Raspberry Pi 5 (4 GB) with a handheld metal detector at
+the gate, evaluated over a 20-day school run.
 
 Research: [researcher name redacted] · Bicol Regional Science High School, Region V ·
 2026 Division Science and Technology Fair · Computational Science (Individual)
@@ -15,10 +15,13 @@ Research: [researcher name redacted] · Bicol Regional Science High School, Regi
 
 | Document | Purpose |
 |---|---|
-| **[flow.md](flow.md)** | System flow — actors, entry process, exception paths, records written. **Start here.** |
-| **[hardware.md](hardware.md)** | Raspberry Pi 5 station, DIY pulse-induction detector box, wiring, safety, calibration, test protocol, BOM |
-| **[analytics-model.md](analytics-model.md)** | Attendance rate, trend regression, per-student absence probability, AHP weighting, composite risk score |
-| **[sms-notifications.md](sms-notifications.md)** | GSM-module SMS transport, store-and-forward queue, message templates, cost model, privacy |
+| **[TDD.md](TDD.md)** | Technical Design Document — architecture, data model, module map, interfaces, deployment. **Start here if you are reading the code.** |
+| **[flow.md](flow.md)** | System flow — actors, entry process, exception paths, records written. **Start here if you are reading the design.** |
+| **[prohibited-items.md](prohibited-items.md)** | Screening at the gate: outcomes, incidents, custody chain, why incidents are not weighted |
+| **[analytics-model.md](analytics-model.md)** | Attendance rate, trend regression, absence probability, AHP weighting, composite risk score, band floors |
+| **[sms-notifications.md](sms-notifications.md)** | GSM-module SMS transport, store-and-forward queue, message templates, spend limits, privacy |
+| **[personel-access.md](personel-access.md)** | The records screen: password gate, attendance corrections, roster import, exports |
+| **[hardware.md](hardware.md)** | Raspberry Pi 5 station, camera and GSM bring-up, screening procedure metrics. §§1–4, 6, 7, 9, 10 describe a detector the project no longer builds |
 | **[research-plan-review.md](research-plan-review.md)** | Defects found in `RESEARCH-PLANCURRENT.docx`, with fixes, by priority |
 | `RESEARCH-PLANCURRENT.docx` | The research plan itself. Source of record — not modified by these docs |
 
@@ -30,11 +33,15 @@ Stated in full in [flow.md](flow.md) §2. In short:
 
 1. **The sensor never writes to a student record.** A detector reading is a device event; only a
    guard-confirmed finding is attached to a person.
-2. **The scan arms the box.** Attribution is deterministic, never inferred from a time window.
-3. **Declare-first is mandatory.** Phone, laptop, and tumbler go in a tray before the bag goes
-   in the box, or the false-positive rate makes the system useless.
-4. **Screening is randomly sampled**, not universal — matching the surprise-inspection basis and
-   resolving throughput.
+2. **The scan arms the screening.** Attribution is deterministic, never inferred from a time
+   window — a screening hangs off the `scan_event_id` that armed it.
+3. **Declare-first is mandatory.** Phone, laptop, and tumbler go in a tray before the bag is
+   checked, or the false-positive rate makes the system useless.
+4. **Screening is universal, not sampled.** Every student who scans in is screened, and the
+   outcome is recorded **including the clears** — they are the denominator of the confirmation
+   rate. This reverses an earlier sampling design that existed only because the coil box handled
+   one bag at a time; a handheld detector does not have that constraint. See
+   [prohibited-items.md](prohibited-items.md) §2.
 
 ---
 
@@ -42,27 +49,53 @@ Stated in full in [flow.md](flow.md) §2. In short:
 
 | Decision | Choice | Where it is argued |
 |---|---|---|
-| Detector form factor | Bag-in-a-box, not a walk-through archway | [hardware.md](hardware.md) §2 |
-| Detector topology | Pulse induction, single coil, no nulling | [hardware.md](hardware.md) §4 |
-| Real-time sensing | RP2040 Pico front end; the Pi 5 has no ADC and Linux cannot hold µs timing | [hardware.md](hardware.md) §1 |
-| QR input | USB webcam in V1; a USB HID scanner is a drop-in upgrade | [hardware.md](hardware.md) §5 |
-| SMS | SIM800C GSM module on USB serial, Smart SIM — not an HTTP API | [hardware.md](hardware.md) §5 |
-| SMS transport | **SIM800C GSM module** on USB serial. Reverses the earlier API decision on cost and privacy; 2G's phase-out under NTC MC 002-09-2025 is a documented limitation | [sms-notifications.md](sms-notifications.md) §1 |
-| Notification policy | Exception-only, not every arrival | [sms-notifications.md](sms-notifications.md) §4 |
+| Detector | **Separate handheld unit, operated by a person.** The DIY pulse-induction coil box was deferred; the metrics it would have produced are not available and the honest procedure metrics replaced them | [hardware.md](hardware.md) §8, [prohibited-items.md](prohibited-items.md) §1 |
+| Screening basis | Universal, every arrival, clears recorded | [prohibited-items.md](prohibited-items.md) §2 |
+| QR input | USB webcam; a USB HID scanner is a drop-in upgrade | [hardware.md](hardware.md) §5 |
+| QR payload | Keyed on the **LRN**, HMAC-signed. A printed card outlives any one database, so keying it on a row id would silently invalidate every card on a reseed | [TDD.md](TDD.md) §6 |
+| SMS transport | **SIM800C GSM module** on USB serial. Reverses the earlier HTTP-API decision on cost and privacy; 2G's phase-out under NTC MC 002-09-2025 is a documented limitation | [sms-notifications.md](sms-notifications.md) §1 |
+| SMS delivery bias | **At-most-once.** An ambiguous send is parked as `unknown` for a human, never auto-retried — a missed text is recoverable, a duplicate erodes trust | [flow.md](flow.md) §4.1 |
+| Notification gate | `consent_on_file`, checked at enqueue. No consent, no message, whatever the policy says | [sms-notifications.md](sms-notifications.md) §6 |
 | Absence prediction | Logistic regression — a linear model cannot output a probability | [analytics-model.md](analytics-model.md) §3–4 |
-| Risk normalisation | Saturating exponentials, not min–max | [analytics-model.md](analytics-model.md) §6 |
+| Risk normalisation | Saturating exponentials, not min–max: one extreme student must not rescale everyone else | [analytics-model.md](analytics-model.md) §6 |
+| Prohibited items in risk | A **floor on the band**, not a weighted criterion. One incident saturates to 0.2212 against a 0.30 cutoff, so no weight summing to 1 could ever raise a band | [prohibited-items.md](prohibited-items.md) §9 |
 | Risk coverage | Scored for everyone, acted on above threshold | [analytics-model.md](analytics-model.md) §8 |
 
 ---
 
 ## Status
 
-Documentation only — no implementation yet.
+**Built and under test.** 43 modules, ~10,600 lines, **687 passing tests** across 33 test
+modules. The full entry flow, screening, custody chain, records screen with corrections, roster
+import, SMS queue over a live SIM800C, analytics and both exports are implemented and exercised.
 
-Suggested order of work:
+Verified end to end on real hardware: all seven guardian message types have been sent from the
+module to a live handset.
+
+| Area | State |
+|---|---|
+| Scan → attendance → notification | Working, on hardware |
+| Screening, incidents, custody | Working |
+| Records screen, corrections, roster import, XLSX export | Working |
+| Analytics (trend, risk, AHP, screening) and the workbook | Working |
+| Weekly summary and absence reminder SMS | Working |
+| Adviser dashboard, per-user logins | **Not built** — one shared password gates the records screen; see [personel-access.md](personel-access.md) §3 |
+| Raspberry Pi deployment | **Not done** — developed and tested on Windows |
+
+### The attendance data is simulated
+
+The database is populated by `scripts/simulate_term.py`, which generates a plausible two weeks
+of gate traffic. **Those numbers are invented.** They exist so the exports and the analytics
+have something to render, and the script prints that warning every time it runs.
+
+**No figure derived from them may be reported as a finding.** The trend slope, the p-value, the
+R², the AUC and the band distribution are all outputs of a simulator. Clear the range with
+`python scripts/simulate_term.py --clear` before the real pilot.
+
+### Remaining before the pilot
 
 1. Apply the Priority 1 fixes in [research-plan-review.md](research-plan-review.md) to the .docx
-2. Build the Pi 5 station: QR scan → student lookup → attendance record ([hardware.md](hardware.md) §10, steps 1–2)
-3. Build and characterise the detector ([hardware.md](hardware.md) §10, steps 3–10)
-4. Wire in notifications with `ConsoleProvider`, then `NullProvider` on a pilot section
-5. One-week pilot on a single section before the 20-day run
+2. Collect signed consent — `consent_on_file` is 1 for a single student, so the SMS queue
+   currently refuses 102 of 103 sends
+3. Deploy to the Pi 5 and run the kiosk from it
+4. One-week pilot on a single section before the 20-day run

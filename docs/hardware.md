@@ -257,13 +257,17 @@ These will each cost you an afternoon if you find them the hard way.
   `libgpiod` code does not.
 - `pinctrl` is the quick CLI for checking pin state on a Pi 5.
 
-In practice the detector needs **none** of this — it connects over USB. GPIO is only relevant
-if you add a status LED, buzzer, or the lid interlock.
+In practice **nothing in this system uses GPIO at all.** The detector is a separate handheld
+unit that connects to nothing, the camera is USB, and the GSM module is USB serial. GPIO is
+only relevant if you later add a status LED or buzzer.
 
 ### Serial
 
-Prefer **USB** for the Pico link. It needs no configuration, survives reboots, and keeps the
-noisy detector on a separate physical connector.
+The **SIM800C GSM module** is the only serial device. It presents as a CH340 USB-UART bridge
+(VID `0x1a86`, PID `0x7523`) — `COM3` on Windows, `/dev/ttyUSB0` on the Pi. `find_port()`
+matches on VID:PID rather than a port name so the same code finds it on both.
+
+Prefer USB over the header UART: it needs no configuration and survives reboots.
 
 If you must use the header UART instead: enable it in `/boot/firmware/config.txt`, disable the
 serial *console* (`raspi-config` → Interface → Serial → login shell **no**, hardware **yes**),
@@ -283,7 +287,10 @@ the "data corruption, loss, and system errors" risk in §F of your research plan
 
 - Use the **official 27 W USB-C PD supply.** Under-powering a Pi 5 with peripherals attached
   causes throttling and USB dropouts that look exactly like software bugs.
-- **Never power the detector from the Pi's 5 V rail.** Separate 12 V supply.
+- **Never power the GSM module from the Pi's 5 V rail.** The SIM800C pulls up to **2 A** on
+  the transmit burst against the 0.5–0.9 A a USB port supplies. It presents as a mid-send
+  disconnect rather than an error, and idle voltage proves nothing — the sag happens under
+  load. Feed VBAT from a supply that can deliver 2 A.
 - SD cards wear out under constant small writes. For a 20-day continuous deployment use a good
   A2-rated card or boot from USB SSD, enable **SQLite WAL mode**, and back up daily. Card
   corruption on day 15 would end your data collection.
@@ -405,7 +412,7 @@ in the field.** The remaining risks are electrical and confined to the enclosure
 
 **Add these to §F of the research plan** — it currently lists only data corruption, privacy,
 and generic device malfunction, and does not mention the detector at all. See
-[research-plan-review.md](research-plan-review.md), item 7.
+[research-plan-review.md](research-plan-review.md), item 3.
 
 ---
 
@@ -515,7 +522,30 @@ Prices are rough PH street estimates for budgeting only — verify before purcha
 | USB isolator ADuM3160 (optional) | 1 | 600–900 |
 | **Total** | | **≈ ₱11,000–22,000** |
 
-Excludes SMS credits — see [sms-notifications.md](sms-notifications.md) §4.
+### 9.1 What was actually bought *(current)*
+
+The BOM above is superseded along with the rest of the coil design. The parts the project
+actually uses:
+
+| Item | Qty | ₱ (est.) |
+|---|---|---|
+| Raspberry Pi 5, 4 GB | 1 | 4,000–5,000 |
+| Power supply, 27 W USB-C | 1 | 800–1,200 |
+| microSD A2 64 GB (or USB SSD) | 1 | 500–1,500 |
+| Monitor, keyboard, mouse | 1 | reuse |
+| USB webcam, 720p or better | 1 | 500–1,500 |
+| **Handheld metal detector** (off-the-shelf security wand) | 1 | 1,000–2,500 |
+| **SIM800C GSM module** on a CH340 board | 1 | 400–700 |
+| Supply for the module, 2 A capable | 1 | 300–600 |
+| Prepaid SIM with load | 1 | 100–300 |
+| Declaration tray | 1–2 | 200–400 |
+| **Total** | | **≈ ₱7,800–15,700** |
+
+Cheaper than the coil build, and the detector is a device with a warranty rather than one
+whose characteristics the study would have had to establish itself.
+
+SMS is a load top-up rather than a per-message credit — see
+[sms-notifications.md](sms-notifications.md) §1.
 
 ---
 
