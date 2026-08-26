@@ -42,6 +42,11 @@ class Trigger(str, Enum):
     LATE = "late"
     ABSENT = "absent"
     INCIDENT = "incident"
+    # Periodic, not event-driven. SUMMARY is the weekly attendance recap; REMINDER is
+    # the monthly absence-limit warning. Both are in notifications.trigger's CHECK --
+    # see db.NOTIFICATION_TRIGGERS.
+    SUMMARY = "summary"
+    REMINDER = "reminder"
 
 
 @dataclass(frozen=True)

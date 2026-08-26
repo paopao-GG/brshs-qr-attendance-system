@@ -43,6 +43,19 @@ TEMPLATES = {
     Trigger.INCIDENT: (
         "TRACKIFY: Please contact the school today regarding {first} ({section})."
     ),
+    # Periodic. Both are deliberately plain counts of the guardian's OWN child -- no
+    # rank, no risk band, no comparison with classmates. sms-notifications.md section 6:
+    # minimise the payload.
+    Trigger.SUMMARY: (
+        "TRACKIFY: {first} ({section}) week of {period}: present {present}, "
+        "late {late}, absent {absent} of {days} school days."
+    ),
+    # {clause} carries the "1 more allowed" or "that is the limit" wording, computed by
+    # the caller so the template stays a template.
+    Trigger.REMINDER: (
+        "TRACKIFY: {first} ({section}): {absent} absences in {period}. {clause} "
+        "Please contact the school if there is a difficulty at home."
+    ),
 }
 
 # Words that must never reach an SMS body. Checked at enqueue time rather than trusted
@@ -79,12 +92,21 @@ class EnqueueResult:
     notification_id: int | None = None
 
 
-def render(trigger: Trigger, student: sqlite3.Row, at: datetime) -> str:
+def render(trigger: Trigger, student: sqlite3.Row, at: datetime,
+           extra: dict | None = None) -> str:
+    """Build the body. `extra` supplies the fields only some templates need.
+
+    Merged UNDER the standard fields, never over them, so a caller cannot accidentally
+    rewrite {first} or {section} with something from a count query.
+    """
     body = TEMPLATES[trigger].format(
-        first=student["first_name"],
-        section=student["section_name"],
-        time=fmt_time(at),
-        date=at.date().isoformat(),
+        **{
+            **(extra or {}),
+            "first": student["first_name"],
+            "section": student["section_name"],
+            "time": fmt_time(at),
+            "date": at.date().isoformat(),
+        }
     )
     return gsm7.truncate(body)
 
@@ -107,6 +129,7 @@ def enqueue(
     *,
     direction: str | None = None,
     dedupe_extra: str | None = None,
+    extra: dict | None = None,
 ) -> EnqueueResult:
     """Write a pending notification. Never sends, never blocks."""
     student = _student(conn, student_id)
@@ -126,7 +149,7 @@ def enqueue(
     if trigger is Trigger.DEPARTURE and not policy.notify_on_departure:
         return EnqueueResult(False, "policy excludes departure")
 
-    body = render(trigger, student, at)
+    body = render(trigger, student, at, extra)
     try:
         gsm7.validate(body)
     except (gsm7.NotGSM7, ValueError) as exc:

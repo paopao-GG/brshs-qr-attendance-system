@@ -44,6 +44,19 @@ coalesce_window_minutes = 3
 retry_limit = 5
 backoff_seconds = [30, 120, 600, 1800, 3600]
 
+# Weekly attendance summary to every consenting guardian, sent when a person presses
+# "Send weekly summaries" in the records screen -- never automatically. ~1 text per
+# guardian per week.
+weekly_summary = true
+
+# Warn a guardian when a student reaches the month's absence threshold. Rides the
+# end-of-day close, so it arrives the day it happens. Fires at absence_warn_at and
+# again at monthly_absence_limit, then goes quiet -- a text on every further absence
+# is nagging, and by then the conversation belongs to a person.
+absence_reminders = true
+monthly_absence_limit = 3
+absence_warn_at = 2
+
 [limits]
 # Circuit breaker. Set slightly above realistic peak (students x 2 + absences).
 # Its job is to catch a loop bug, not to ration normal use -- and on an unli-text SIM

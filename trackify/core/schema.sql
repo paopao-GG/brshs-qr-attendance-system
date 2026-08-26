@@ -89,7 +89,8 @@ CREATE TABLE IF NOT EXISTS notifications (
     student_id          INTEGER NOT NULL REFERENCES students(id) ON DELETE RESTRICT,
     guardian_mobile     TEXT    NOT NULL,
     trigger             TEXT    NOT NULL CHECK (trigger IN
-                            ('arrival', 'departure', 'late', 'absent', 'incident')),
+                            ('arrival', 'departure', 'late', 'absent', 'incident',
+                             'summary', 'reminder')),
     idempotency_key     TEXT    NOT NULL UNIQUE,
     body                TEXT    NOT NULL,
     status              TEXT    NOT NULL DEFAULT 'pending' CHECK (status IN

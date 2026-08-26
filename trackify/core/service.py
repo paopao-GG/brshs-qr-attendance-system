@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
-from ..notify import queue
+from ..notify import periodic, queue
 from . import qrcodes
 from .attendance import (
     DayClose,
@@ -222,6 +222,13 @@ class ScanService:
             for student_id in result.absent_ids:
                 queue.enqueue(
                     self.conn, student_id, Trigger.ABSENT, event_at, self.config
+                )
+                # The threshold warning rides the absence that caused it. A warning
+                # that arrives a fortnight later is not a warning, and this is the
+                # only place an absence is detected. It fires at most twice a month
+                # per student -- see periodic.absence_reminder.
+                periodic.absence_reminder(
+                    self.conn, self.config, student_id, day, event_at
                 )
         return result
 

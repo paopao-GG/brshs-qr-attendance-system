@@ -490,17 +490,20 @@ class RecordsPage(QWidget):
         self.btn_export = self._button("Export XLSX", None, self._export,
                                        kind="ToolbarPrimary")
         self.btn_analytics = self._button("Export analytics", None, self._export_analytics)
+        self.btn_summaries = self._button("Send weekly summaries", None,
+                                          self._send_summaries)
         self.btn_close = self._button("Close", "back", self.closed.emit,
                                       kind="ToolbarQuiet")
         for button in (self.btn_log, self.btn_roster, self.btn_suspend,
-                       self.btn_password, self.btn_analytics, self.btn_export,
-                       self.btn_close):
+                       self.btn_password, self.btn_summaries, self.btn_analytics,
+                       self.btn_export, self.btn_close):
             bar.addWidget(button)
         root.addLayout(bar)
         # The attendance controls are meaningless over a roster; the roster carries its
         # own search and section filter. Held together so _show_view can hide them.
         self._attendance_controls = (self.month, self.year, self.btn_suspend,
-                                     self.btn_export, self.btn_analytics, self.btn_log,
+                                     self.btn_export, self.btn_analytics,
+                                     self.btn_summaries, self.btn_log,
                                      self.section, self.section_label)
 
         # --- legend --------------------------------------------------------
@@ -840,6 +843,64 @@ class RecordsPage(QWidget):
         self.status.setText(
             f"Analytics exported to {written}. Check the Summary sheet first -- it "
             "lists every caveat in force."
+        )
+
+    def _send_summaries(self) -> None:
+        """Queue this week's attendance summary for every consenting guardian.
+
+        Counted first and confirmed before anything is written. Seventy-odd texts
+        leaving at once is a real event with a real cost, and the person pressing the
+        button should see the number before it happens rather than afterwards.
+
+        Whole roster, not the selected section: a summary is per guardian, and a parent
+        with children in two sections should not get two half-reports.
+        """
+        from ..core.config import load_config
+        from ..notify import periodic
+
+        config = self.config or load_config()
+        if not config.notifications.weekly_summary:
+            QMessageBox.information(
+                self, "Weekly summaries are off",
+                "Set weekly_summary = true under [notifications] in config.toml to "
+                "enable them.",
+            )
+            return
+
+        preview = periodic.weekly_summaries(self.conn, config, dry_run=True)
+        if not preview.eligible:
+            QMessageBox.information(
+                self, "Nothing to send",
+                f"No attendance was recorded for {preview.period} "
+                f"({preview.start} to {preview.end}), so there is nothing to summarise.",
+            )
+            return
+
+        answer = QMessageBox.question(
+            self, "Send weekly summaries",
+            f"Queue an attendance summary for the week of {preview.period} "
+            f"({preview.start} to {preview.end})?\n\n"
+            f"{preview.eligible} student(s) have attendance recorded. One message goes "
+            "to each consenting guardian; siblings are combined into a single text.\n\n"
+            "Messages are queued, not sent here -- the scan station sends them.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        try:
+            run = periodic.weekly_summaries(self.conn, config)
+            self.conn.commit()
+        except Exception as exc:            # noqa: BLE001 - never lose the screen
+            QMessageBox.warning(self, "Could not queue summaries", str(exc))
+            return
+
+        refused = "; ".join(f"{n} {reason}" for reason, n in sorted(run.skipped.items()))
+        self.status.setText(
+            f"{run.queued} summary message(s) queued for {run.period}."
+            + (f" Not queued: {refused}." if refused else "")
+            + (" Re-pressing this queues nothing more for the same week."
+               if run.queued else "")
         )
 
     def _change_password(self) -> None:

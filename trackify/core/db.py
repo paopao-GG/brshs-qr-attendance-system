@@ -6,6 +6,7 @@ threads. Every thread calls connect() and gets its own.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -74,10 +75,20 @@ MIGRATIONS: dict[str, dict[str, str]] = {
 }
 
 
-def _widen_notification_triggers(conn: sqlite3.Connection) -> bool:
-    """Allow trigger='incident' on a database created before screening existed.
+# Every trigger the current schema allows, in schema.sql's order. Widening this list
+# is a table rebuild, not an ALTER -- see _widen_notification_triggers.
+NOTIFICATION_TRIGGERS = ("arrival", "departure", "late", "absent", "incident",
+                         "summary", "reminder")
 
-    This one cannot be done with ALTER TABLE. SQLite has no way to modify a CHECK
+
+def _widen_notification_triggers(conn: sqlite3.Connection) -> bool:
+    """Bring an older database's trigger CHECK up to the current set.
+
+    Ran first for trigger='incident' on databases created before screening existed,
+    and again for 'summary' and 'reminder'. Driven off NOTIFICATION_TRIGGERS rather
+    than a hardcoded pair, so the next addition is a one-line change here.
+
+    This cannot be done with ALTER TABLE. SQLite has no way to modify a CHECK
     constraint, so widening the allowed set means rebuilding the table and copying
     every row -- the documented 12-step procedure. Returns True if it rebuilt.
 
@@ -91,16 +102,42 @@ def _widen_notification_triggers(conn: sqlite3.Connection) -> bool:
     sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='notifications'"
     ).fetchone()
-    if sql is None or "'incident'" in sql[0]:
+    if sql is None:
         return False
 
-    # The rebuilt definition must match schema.sql exactly, so a fresh database and a
-    # migrated one end up identical.
-    new_sql = sql[0].replace(
-        "'arrival', 'departure', 'late', 'absent'",
-        "'arrival', 'departure', 'late', 'absent', 'incident'",
-    ).replace("CREATE TABLE notifications", "CREATE TABLE notifications_new", 1)      .replace("CREATE TABLE IF NOT EXISTS notifications",
-              "CREATE TABLE notifications_new", 1)
+    missing = [name for name in NOTIFICATION_TRIGGERS if f"'{name}'" not in sql[0]]
+    if not missing:
+        return False
+
+    # Rewrite the whole tuple rather than appending, so the result is the same however
+    # many values were missing. The CHECK and the column set then match schema.sql; the
+    # DDL text does not quite, because SQLite requotes the table name on RENAME and
+    # ensure_columns appends its columns at the end. Cosmetic, and fixing it would mean
+    # another full rebuild.
+    present = [name for name in NOTIFICATION_TRIGGERS if f"'{name}'" in sql[0]]
+    old_list = ", ".join(f"'{name}'" for name in present)
+    # Wrapped after the fifth value to match schema.sql's own layout, so a migrated
+    # database and a freshly created one produce byte-identical DDL.
+    new_list = (", ".join(f"'{n}'" for n in NOTIFICATION_TRIGGERS[:5])
+                + ",\n                             "
+                + ", ".join(f"'{n}'" for n in NOTIFICATION_TRIGGERS[5:]))
+    # The table name has to be matched with a pattern, not a literal. After the FIRST
+    # rebuild SQLite stores the definition as CREATE TABLE "notifications" -- quoted,
+    # and without the IF NOT EXISTS -- so a literal replace silently matches nothing
+    # and the rebuild then fails with 'table notifications already exists'. Only the
+    # second widening ever hits that, which is why it survived the first one.
+    new_sql = re.sub(
+        r'^\s*CREATE\s+TABLE\s+(IF\s+NOT\s+EXISTS\s+)?"?notifications"?',
+        "CREATE TABLE notifications_new",
+        sql[0].replace(old_list, new_list, 1),
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    if "notifications_new" not in new_sql:
+        raise RuntimeError(
+            "could not rename the notifications table in its own definition; "
+            f"refusing to rebuild. Definition began: {sql[0][:60]!r}"
+        )
 
     columns = [r["name"] for r in conn.execute("PRAGMA table_info(notifications)")]
     collist = ", ".join(columns)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import time
 from pathlib import Path
 
@@ -39,6 +39,13 @@ class NotificationConfig:
     coalesce_window_minutes: int
     retry_limit: int
     backoff_seconds: list[int]
+    # Periodic notifications. Defaulted so a config.toml predating them still loads,
+    # and defaulted OFF: turning on a job that texts every guardian should be a
+    # decision someone made, not something that happens on upgrade.
+    weekly_summary: bool = False
+    absence_reminders: bool = False
+    monthly_absence_limit: int = 3
+    absence_warn_at: int = 2
 
     @property
     def notify_on_arrival(self) -> bool:
@@ -209,7 +216,12 @@ def load_config(path: Path | None = None) -> Config:
             early_departure_cutoff=_parse_time(school["early_departure_cutoff"]),
         ),
         scanning=ScanningConfig(**raw["scanning"]),
-        notifications=NotificationConfig(**raw["notifications"]),
+        # Merged over defaults rather than **raw["notifications"], so a config.toml
+        # written before the periodic keys existed still loads.
+        notifications=NotificationConfig(**{
+            key: value for key, value in raw["notifications"].items()
+            if key in {f.name for f in fields(NotificationConfig)}
+        }),
         limits=LimitsConfig(**raw["limits"]),
         risk=RiskConfig(
             mu_tardiness=risk["mu_tardiness"],
