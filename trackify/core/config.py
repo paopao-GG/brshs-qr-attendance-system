@@ -93,6 +93,13 @@ class ScreeningConfig:
     # timeout is ever reintroduced, read prohibited-items.md 5 first.
 
 
+# Minimum band a confirmed prohibited-item incident forces, indexed by severity 1-4.
+# Not a weighted criterion: one incident saturates to 0.2212, below the 0.30 Monitor
+# cutoff, so no weight that sums to 1 with the others could raise a band on its own.
+# See docs/prohibited-items.md section 9.
+DEFAULT_INCIDENT_FLOOR = ("Monitor", "Monitor", "Elevated", "High")
+
+
 @dataclass(frozen=True)
 class RiskConfig:
     mu_tardiness: float
@@ -100,6 +107,16 @@ class RiskConfig:
     band_low: float
     band_monitor: float
     band_elevated: float
+    # Defaulted, unlike the five above: those predate the section and are read by
+    # direct subscripting, so a config.toml without [risk.incident_floor] must still
+    # load rather than raising KeyError at startup. A tuple because RiskConfig is
+    # frozen and severity is CHECK (severity BETWEEN 1 AND 4).
+    incident_floor: tuple[str, str, str, str] = DEFAULT_INCIDENT_FLOOR
+    # Who set the band cutoffs, and when. Empty means nobody has, and the export says
+    # so -- a boundary decides whether a real student is referred, so an unattributed
+    # one is a researcher's guess wearing an institution's authority.
+    bands_set_by: str = ""
+    bands_set_on: str = ""
 
 
 @dataclass(frozen=True)
@@ -159,6 +176,19 @@ def _allowlist(raw: str) -> tuple[str, ...]:
     return tuple(out)
 
 
+
+def _incident_floor(section) -> tuple[str, str, str, str]:
+    """[risk.incident_floor] as severity_1..severity_4, defaulted per level.
+
+    Missing keys fall back individually rather than all-or-nothing, so a config that
+    sets only severity_4 still gets sensible behaviour for the rest.
+    """
+    section = section or {}
+    return tuple(
+        section.get(f"severity_{level}", DEFAULT_INCIDENT_FLOOR[level - 1])
+        for level in (1, 2, 3, 4)
+    )
+
 def load_config(path: Path | None = None) -> Config:
     path = path or DEFAULT_CONFIG
     with open(path, "rb") as handle:
@@ -187,6 +217,9 @@ def load_config(path: Path | None = None) -> Config:
             band_low=bands["low"],
             band_monitor=bands["monitor"],
             band_elevated=bands["elevated"],
+            incident_floor=_incident_floor(risk.get("incident_floor")),
+            bands_set_by=bands.get("set_by", ""),
+            bands_set_on=bands.get("set_on", ""),
         ),
         # Merged over defaults rather than CameraConfig(**raw["camera"]), so a
         # config.toml predating the [camera] section still loads instead of raising

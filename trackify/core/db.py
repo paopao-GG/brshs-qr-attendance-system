@@ -67,6 +67,10 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     "notifications": {"next_attempt_at": "TEXT"},
     "attendance_days": {"corrected_by_name": "TEXT", "correction_type": "TEXT"},
     "audit_log": {"actor_name": "TEXT"},
+    # NOT NULL needs a non-null default for ALTER TABLE ADD COLUMN; existing rows read
+    # back as an unfloored composite, which is what they were.
+    "risk_scores": {"incidents": "INTEGER NOT NULL DEFAULT 0",
+                    "band_source": "TEXT NOT NULL DEFAULT 'composite'"},
 }
 
 

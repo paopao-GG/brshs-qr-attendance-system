@@ -258,19 +258,74 @@ def test_a_photo_does_not_linger_onto_the_next_student(
 
 # --- end-of-day close (flow.md 5.5) -----------------------------------------
 
-def test_day_is_closed_once_past_dismissal(qtbot, kiosk, conn, make_student):
+def _scanned_today(conn, student_id, hour=7):
+    """One scan on today's date, which is what makes it a day the gate actually ran."""
+    from datetime import datetime, time
+
+    today = datetime.now().date()
+    conn.execute(
+        """INSERT INTO scan_events (student_id, scanned_at, date, direction, method)
+           VALUES (?, ?, ?, 'in', 'scan')""",
+        (student_id, datetime.combine(today, time(hour, 0)).isoformat(timespec="seconds"),
+         today.isoformat()),
+    )
+
+
+def test_day_is_closed_once_past_dismissal(qtbot, kiosk, conn, student, make_student):
+    """One student scanned, one did not. The one who did not is absent.
+
+    The scan is what makes this a day the gate actually ran -- the automatic job now
+    skips a day with no scans at all, since that is the kiosk being opened rather than
+    the school being attended. This test is about the dismissal-time comparison and the
+    latch, so it gets a day that really happened.
+    """
     from datetime import datetime, time
 
     make_student(guardian_mobile="639181112222")
+    today = datetime.now().date()
+    _scanned_today(conn, student)
     kiosk._closed_for = None
-    after_dismissal = datetime.combine(datetime.now().date(), time(17, 0))
+    after_dismissal = datetime.combine(today, time(17, 0))
 
     kiosk._maybe_close_day(after_dismissal)
 
     absent = conn.execute(
         "SELECT COUNT(*) FROM attendance_days WHERE status = 'absent'"
     ).fetchone()[0]
-    assert absent == 2
+    assert absent == 1, "the one who never scanned"
+
+
+def test_a_day_nobody_scanned_is_not_closed(qtbot, kiosk, conn, make_student):
+    """Opening the kiosk in the evening must not invent a day of absences.
+
+    Every student having no scan is only evidence of absence when OTHER students do
+    have one. With zero scans the gate simply was not running, and marking the whole
+    roster absent puts a fabricated 0% day into the attendance trend -- where it acts
+    as a leverage point and multiplied the reported slope by 7.7 on real data.
+    """
+    from datetime import datetime, time
+
+    make_student()
+    conn.execute("DELETE FROM attendance_days")
+    kiosk._closed_for = None
+
+    kiosk._maybe_close_day(datetime.combine(datetime.now().date(), time(17, 0)))
+
+    assert conn.execute("SELECT COUNT(*) FROM attendance_days").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM notifications").fetchone()[0] == 0
+
+
+def test_the_skip_still_latches(qtbot, kiosk, conn):
+    """Otherwise the count query re-runs on every clock tick for the rest of the day."""
+    from datetime import datetime, time
+
+    conn.execute("DELETE FROM attendance_days")
+    kiosk._closed_for = None
+    day = datetime.now().date()
+
+    kiosk._maybe_close_day(datetime.combine(day, time(17, 0)))
+
+    assert kiosk._closed_for == day.isoformat()
 
 
 def test_day_is_not_closed_before_dismissal(qtbot, kiosk, conn):
@@ -288,9 +343,10 @@ def test_day_is_not_closed_before_dismissal(qtbot, kiosk, conn):
     assert kiosk._closed_for is None
 
 
-def test_the_latch_stops_it_running_every_second(qtbot, kiosk, conn):
+def test_the_latch_stops_it_running_every_second(qtbot, kiosk, conn, student):
     from datetime import datetime, time
 
+    _scanned_today(conn, student)      # the guard skips a day with no scans at all
     kiosk._closed_for = None
     after = datetime.combine(datetime.now().date(), time(17, 0))
     calls = []
@@ -303,11 +359,12 @@ def test_the_latch_stops_it_running_every_second(qtbot, kiosk, conn):
     assert len(calls) == 1
 
 
-def test_a_failing_close_never_takes_the_gate_down(qtbot, kiosk):
+def test_a_failing_close_never_takes_the_gate_down(qtbot, kiosk, conn, student):
     """The kiosk's job is the gate. An end-of-day job that raises must not stop
     students being scanned in."""
     from datetime import datetime, time
 
+    _scanned_today(conn, student)      # the guard skips a day with no scans at all
     kiosk._closed_for = None
     def boom(*a, **k):
         raise RuntimeError("database is locked")

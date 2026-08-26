@@ -78,11 +78,11 @@ def _blocked(sheet, title: str, reason: str) -> None:
         sheet.column_dimensions[column].width = 16
 
 
-def _note(sheet, row: int, text: str) -> int:
+def _note(sheet, row: int, text: str, width: int = 6) -> int:
     cell = sheet.cell(row, 1, text)
     cell.font = SMALL
     cell.alignment = WRAP
-    sheet.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
+    sheet.merge_cells(start_row=row, start_column=1, end_row=row, end_column=width)
     return row + 1
 
 
@@ -197,21 +197,30 @@ def _risk_sheet(sheet, report, config) -> None:
         return
 
     _title(sheet, "Composite risk",
-           "Risk = w_A*P(absent) + w_T*T + w_E*E   -- recommends review, never a sanction")
+           "Risk = w_A*P(absent) + w_T*T + w_E*E, then raised to the incident floor "
+           "-- recommends review, never a sanction")
 
+    # The incident columns sit immediately after Band, which keeps the band cell at
+    # column 9 for the fill below and reads in the right order: the band, then why.
     columns = ("LRN", "Student", "Section", "P(absent)", "P source", "Tardiness T",
-               "Early departure E", "Composite", "Band", "Late", "Early", "Absent",
-               "Days")
-    widths = (14, 30, 15, 11, 26, 12, 17, 11, 11, 7, 7, 8, 7)
+               "Early departure E", "Composite", "Band", "Incidents", "Kind",
+               "Max severity", "Band source", "Late", "Early", "Absent", "Days")
+    widths = (14, 30, 15, 11, 26, 12, 17, 11, 11, 10, 20, 12, 26, 7, 7, 8, 7)
     row = 4
     _headers(sheet, row, columns, widths)
     row += 1
 
     for entry in report.rows:
+        # Category and severity, never incidents.item_description. The schema calls a
+        # record naming a minor beside a prohibited item sensitive personal information
+        # under RA 10173; the free text adds nothing for triage that the category does
+        # not, and this workbook gets emailed.
         values = (entry.lrn, entry.name, entry.section,
                   round(entry.p_absent, 4), entry.p_absent_source,
                   round(entry.tardiness, 4), round(entry.early_departure, 4),
                   round(entry.composite, 4), entry.band,
+                  entry.n_incidents or "", ", ".join(entry.incident_kinds),
+                  entry.max_severity or "", entry.band_source,
                   entry.n_late, entry.n_early, entry.n_absent, entry.n_days)
         for index, value in enumerate(values):
             cell = sheet.cell(row, 1 + index, value)
@@ -236,14 +245,31 @@ def _risk_sheet(sheet, report, config) -> None:
         row += 1
 
     row += 1
+    if config.risk.bands_set_by:
+        when = f" on {config.risk.bands_set_on}" if config.risk.bands_set_on else ""
+        row = _note(sheet, row,
+                    f"Band cutoffs set by {config.risk.bands_set_by}{when}. A boundary "
+                    "decides whether a real student is referred, which is an "
+                    "institutional decision, not a researcher's.",
+                    width=len(columns))
+    else:
+        row = _note(sheet, row,
+                    "Band cutoffs come from config.toml and are PLACEHOLDERS until the "
+                    "school sets them. A boundary decides whether a real student is "
+                    "referred, which is an institutional decision, not a researcher's.",
+                    width=len(columns))
     row = _note(sheet, row,
-                "Band cutoffs come from config.toml and are PLACEHOLDERS until the "
-                "school sets them. A boundary decides whether a real student is "
-                "referred, which is an institutional decision, not a researcher's.")
+                "A confirmed prohibited-item incident sets a MINIMUM band by severity "
+                "(config.toml [risk.incident_floor]). It raises a band, never lowers "
+                "one, and does not change the composite -- 'Band source' says which "
+                "rule decided. It is a floor rather than a weighted criterion because "
+                "one incident saturates to 0.2212, below the 0.30 Monitor cutoff: no "
+                "weight summing to 1 with the others could raise a band on its own.",
+                width=len(columns))
     if report.model_note:
         _note(sheet, row,
               "P(absent) is the observed absence rate, not a model prediction: "
-              + report.model_note)
+              + report.model_note, width=len(columns))
 
 
 def _ahp_sheet(sheet, weights, matrix) -> None:
@@ -324,11 +350,13 @@ def _screening_sheet(sheet, summary) -> None:
     row += 1
     rate = lambda v: "-" if v is None else f"{v:.1%}"          # noqa: E731
     for label, value, note in (
-        ("Scans", summary.scans, ""),
-        ("Screenings answered", summary.screened, ""),
-        ("Coverage", rate(summary.coverage), "screened / scans"),
+        ("Scans", summary.scans, "in and out"),
+        ("Arrivals", summary.arrivals, "screening happens on the way in"),
+        ("Screenings answered", summary.screened, "including 'not screened'"),
+        ("Examined", summary.examined, "someone actually looked"),
+        ("Coverage", rate(summary.coverage), "examined / arrivals"),
         ("Metal detected (alarms)", summary.alarms, ""),
-        ("Alarm rate", rate(summary.alarm_rate), "alarms / screened"),
+        ("Alarm rate", rate(summary.alarm_rate), "alarms / examined"),
         ("Confirmed findings", summary.confirmed, "prohibited or school hazard"),
         ("Confirmation rate", rate(summary.confirmation_rate), "confirmed / alarms"),
     ):
@@ -379,10 +407,17 @@ def _screening_sheet(sheet, summary) -> None:
 
     for text in summary.notes:
         row = _note(sheet, row, text)
+    row = _note(sheet, row,
+                "Incidents are NOT a weighted term in the composite. Over a short study "
+                "the count is near zero for every student, and a near-constant criterion "
+                "contributes noise, cannot be validated, and invites the question of how "
+                "its weight was derived.")
     _note(sheet, row,
-          "Incidents are NOT an input to the risk score. Over a short study the count is "
-          "near zero for every student, and a near-constant criterion contributes noise, "
-          "cannot be validated, and invites the question of how its weight was derived.")
+          "They are not ignored either: a confirmed incident sets a MINIMUM band on the "
+          "Risk sheet, keyed to severity. A floor rather than a weight because one "
+          "incident saturates to 0.2212 against a 0.30 Monitor cutoff -- a weighted term "
+          "could never have raised the band at all. Counts here stay aggregate; the "
+          "per-student detail is on the Risk sheet.")
 
 
 def _model_sheet(sheet, report) -> None:

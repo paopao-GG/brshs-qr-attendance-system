@@ -926,6 +926,24 @@ class KioskWindow(QWidget):
             if now.time() < self._dismissal[1]:
                 return
 
+            # A day nobody scanned is a day the gate did not run, so there is nothing
+            # to close. Absence is derived from a student having no scan AMONG a day of
+            # scans; with no scans at all there is no evidence the school was even
+            # open, and closing marks the entire roster absent -- which is what
+            # close_open_days' own docstring calls the worst thing this job could do.
+            #
+            # Opening the kiosk one evening to look at the records is enough to trigger
+            # it, and the fabricated 0% day then acts as a leverage point on the
+            # attendance trend. Only the AUTOMATIC job is guarded: a deliberate close
+            # from the records UI or a script still behaves exactly as before, because
+            # then someone has actually asked for it.
+            scanned = self.service.conn.execute(
+                "SELECT COUNT(*) FROM scan_events WHERE date = ?", (day,)
+            ).fetchone()[0]
+            if not scanned:
+                self._closed_for = day    # latch: don't re-check every tick all evening
+                return
+
             self._closed_for = day    # latch BEFORE the work, so a failure cannot loop
             result = self.service.close_day(day, at=now)
         except Exception as exc:      # noqa: BLE001 - never take the gate down for this

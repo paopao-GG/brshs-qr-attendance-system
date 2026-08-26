@@ -117,8 +117,80 @@ def test_the_risk_sheet_labels_an_observed_rate_as_not_a_prediction(conn, cohort
     assert "observed rate (model not fitted)" in text
 
 
-def test_the_risk_sheet_says_the_bands_are_placeholders(conn, cohort, book):
-    assert "PLACEHOLDER" in text_of(book()["Risk"]).upper()
+def _book_with(conn, config, tmp_path, **risk_overrides):
+    """A workbook built against a modified risk config."""
+    import dataclasses
+
+    cfg = dataclasses.replace(
+        config, risk=dataclasses.replace(config.risk, **risk_overrides))
+    return load_workbook(
+        export_analytics(conn, cfg, tmp_path / "override.xlsx"))
+
+
+def test_unattributed_band_cutoffs_are_flagged_as_placeholders(conn, cohort, config,
+                                                               tmp_path):
+    """A boundary decides whether a real student is referred. Nobody having set it is
+    the thing that has to be said out loud."""
+    book = _book_with(conn, config, tmp_path, bands_set_by="", bands_set_on="")
+    assert "PLACEHOLDER" in text_of(book["Risk"]).upper()
+
+
+def test_attributed_band_cutoffs_name_who_set_them(conn, cohort, config, tmp_path):
+    """Once a school has set them they are not placeholders, and saying so would be
+    false. The warning is replaced by the provenance, never simply dropped."""
+    book = _book_with(conn, config, tmp_path,
+                      bands_set_by="Guidance counsellor, BRSHS", bands_set_on="2026-08-27")
+    text = text_of(book["Risk"])
+
+    assert "Guidance counsellor, BRSHS" in text
+    assert "2026-08-27" in text
+    assert "PLACEHOLDER" not in text.upper()
+
+
+# --- incidents on the Risk sheet ---------------------------------------------
+
+def _incident(conn, student_id, category="bladed", severity=4,
+              description="folding penknife"):
+    """One confirmed prohibited-item incident, through the real table shape."""
+    scan_id = conn.execute(
+        """INSERT INTO scan_events (student_id, scanned_at, date, direction, method)
+           VALUES (?, '2026-09-02T07:00:00', '2026-09-02', 'in', 'scan')""",
+        (student_id,)).lastrowid
+    event = conn.execute(
+        """INSERT INTO screening_events (scan_event_id, occurred_at, metal_detected,
+               outcome) VALUES (?, ?, 1, 'prohibited')""", (scan_id, utcnow())).lastrowid
+    conn.execute(
+        """INSERT INTO incidents (student_id, screening_event_id, occurred_at, category,
+               item_description, severity)
+           VALUES (?, ?, '2026-09-02T07:05:00', ?, ?, ?)""",
+        (student_id, event, category, description, severity))
+
+
+def test_the_risk_sheet_names_the_kind_of_item(conn, cohort, book):
+    """"What kind" is the category. The free-text description is not carried."""
+    _incident(conn, cohort[0], category="bladed", description="folding penknife")
+    text = text_of(book()["Risk"])
+
+    assert "bladed" in text
+    assert "Max severity" in text
+    assert "folding penknife" not in text,         "RA 10173: the description is the most sensitive field and adds nothing here"
+
+
+def test_the_risk_sheet_says_why_a_band_was_floored(conn, cohort, book):
+    _incident(conn, cohort[0], severity=4)
+    text = text_of(book()["Risk"])
+
+    assert "incident floor (severity 4)" in text
+    assert "Band source" in text
+
+
+def test_no_workbook_sheet_carries_an_item_description(conn, cohort, book):
+    """The one string that must not appear anywhere in a file that gets emailed."""
+    _incident(conn, cohort[0], description="box cutter")
+    workbook = book()
+
+    for name in workbook.sheetnames:
+        assert "box cutter" not in text_of(workbook[name]), f"leaked on {name}"
 
 
 # --- the AHP sheet ----------------------------------------------------------
@@ -170,8 +242,20 @@ def test_the_screening_sheet_names_no_student(conn, section, make_student, book)
     assert "Coverage" in text
 
 
-def test_the_screening_sheet_says_incidents_are_not_scored(conn, book):
-    assert "NOT an input to the risk score" in text_of(book()["Screening"])
+def test_the_screening_sheet_says_incidents_are_not_weighted(conn, book):
+    """Both halves, because either alone is misleading.
+
+    "Not scored" was the old wording and is now false: an incident does not enter the
+    composite, but it does set a floor on the band.
+    """
+    text = text_of(book()["Screening"])
+    assert "NOT a weighted term in the composite" in text
+    assert "sets a MINIMUM band" in text
+    assert "0.2212" in text, "the arithmetic, so nobody re-proposes the weighted version"
+
+
+def test_the_screening_sheet_keeps_the_detail_on_the_risk_sheet(conn, book):
+    assert "per-student detail is on the Risk sheet" in text_of(book()["Screening"])
 
 
 # --- scope and naming -------------------------------------------------------

@@ -34,7 +34,8 @@ CONFIRMED = ("prohibited", "school_hazard")
 @dataclass(frozen=True)
 class ScreeningSummary:
     scans: int = 0
-    screened: int = 0
+    arrivals: int = 0                   # scan_events with direction = 'in'
+    screened: int = 0                   # screening rows, INCLUDING 'not screened'
     alarms: int = 0                     # metal_detected = 1
     confirmed: int = 0
     outcomes: dict[str, int] = field(default_factory=dict)
@@ -52,17 +53,33 @@ class ScreeningSummary:
         return self.scans > 0
 
     @property
+    def examined(self) -> int:
+        """Screenings where someone actually looked.
+
+        A 'not_screened' row is a record that screening did NOT happen -- a person
+        chose it, which is why it is stored rather than left blank. Counting it as a
+        screening would make coverage 100% precisely when nobody was being screened.
+        """
+        return self.screened - self.outcomes.get("not_screened", 0)
+
+    @property
     def coverage(self) -> float | None:
-        """Share of arriving students who were screened at all.
+        """Share of ARRIVING students who were screened at all.
 
         hardware.md section 8's headline procedure metric. Silence is 'not_screened',
         never 'clear', so this is a real measure rather than an artefact of the UI.
+
+        Against arrivals, not against all scans. Screening happens at the gate on the
+        way in; every student also scans out, so dividing by both directions caps this
+        at about 50% no matter how thorough the guards are -- a perfect procedure would
+        have reported itself as half-failing.
         """
-        return self.screened / self.scans if self.scans else None
+        return self.examined / self.arrivals if self.arrivals else None
 
     @property
     def alarm_rate(self) -> float | None:
-        return self.alarms / self.screened if self.screened else None
+        """Of the bags actually examined, how many the detector flagged."""
+        return self.alarms / self.examined if self.examined else None
 
     @property
     def confirmation_rate(self) -> float | None:
@@ -126,6 +143,9 @@ def summarise(conn: sqlite3.Connection, *, start: str | None = None,
 
     scans = conn.execute(
         f"SELECT COUNT(*) FROM scan_events{scan_filter}", params).fetchone()[0]
+    arrivals = conn.execute(
+        f"SELECT COUNT(*) FROM scan_events{scan_filter}"
+        f"{' AND' if scan_filter else ' WHERE'} direction = 'in'", params).fetchone()[0]
 
     # screening_events has no date column of its own -- attribution flows through the
     # arming scan (flow.md Rule 2), so the range is applied there.
@@ -175,7 +195,8 @@ def summarise(conn: sqlite3.Connection, *, start: str | None = None,
     requests = conn.execute("SELECT COUNT(*) FROM hazard_requests").fetchone()[0]
 
     return ScreeningSummary(
-        scans=scans, screened=screened, alarms=alarms, confirmed=confirmed,
+        scans=scans, arrivals=arrivals, screened=screened, alarms=alarms,
+        confirmed=confirmed,
         outcomes={name: outcomes.get(name, 0) for name in OUTCOMES},
         incidents_by_category={name: by_category.get(name, 0) for name in CATEGORIES},
         incidents_by_severity={level: by_severity.get(level, 0) for level in (1, 2, 3, 4)},

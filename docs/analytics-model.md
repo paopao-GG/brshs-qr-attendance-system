@@ -165,6 +165,10 @@ Three, not two:
 >
 > The schema agrees: `risk_scores.early_departure_score`, and `nu_early_departure` in
 > `config.toml`.
+>
+> Incidents are not ignored, though. A confirmed one sets a **floor on the band** (§7) —
+> a policy rule with no weight to derive, which is why the objection above does not apply
+> to it.
 
 > **Use three criteria, not two.** A 2×2 pairwise matrix is *always* perfectly consistent —
 > CR = 0 by construction, no matter what numbers you enter. With only two criteria the
@@ -204,8 +208,46 @@ tardiness (`a₂₃` = 1/7):
 > **These numbers are illustrative, not elicited.** They are what `ahp.DOCUMENTED_MATRIX`
 > ships as a placeholder so risk is computable on day one, and every export marks anything
 > derived from them as *not elicited*. Note in particular that they put **0.73 on early
-> departure** — plausible when the third criterion was *incidents*, and questionable now.
-> **Do not report these as findings.** Convene the panel, then `ahp.save()` the real matrix.
+> departure** — plausible when the third criterion was *incidents*, and questionable now:
+> under them the largest reachable composite is `0.1884 + 0.0810 = 0.2694`, below the 0.30
+> cutoff, so **no student could ever leave the Low band**. They remain here as the worked
+> example for the arithmetic, and are superseded in practice by §5.1.
+
+### 5.1 Adopted weights
+
+Recorded in `ahp_weights` version 1, elicited from the **guidance counsellor and discipline
+officer, Bicol Regional Science High School**, 27 August 2026. These, not the example above,
+are what the exports use.
+
+|  | Absence | Tardiness | Early departure |
+|---|---|---|---|
+| **Absence** | 1 | 5 | 4 |
+| **Tardiness** | 1/5 | 1 | 1/2 |
+| **Early departure** | 1/4 | 2 | 1 |
+
+```
+w_A = 0.6833    w_T = 0.1168    w_E = 0.1998        (Σ = 1.0000 ✓)
+λmax = 3.0246    CI = 0.0123    CR = 0.0212         ✓ ≤ 0.10
+```
+
+Absence dominates, which is both what a school ranks first and what this study is about. The
+consistency ratio is 0.0212 — comfortably coherent, and a stronger result than the example's
+0.0559.
+
+**These live in the database, not in the code.** `scripts/seed_demo.py --reset` clears
+`ahp_weights` along with everything else, so a reseed drops back to the placeholder. To put
+them back:
+
+```python
+from trackify.core import db
+from trackify.analytics import ahp
+conn = db.connect()
+ahp.save(conn, ((1, 5, 4), (1/5, 1, 1/2), (1/4, 2, 1)),
+         elicited_from="Guidance counsellor and discipline officer, "
+                       "Bicol Regional Science High School",
+         elicited_at="2026-08-27")
+conn.commit()
+```
 
 Row geometric means:
 
@@ -289,13 +331,13 @@ E_i = 1 − exp( −ν · n_early,i )       with ν = 0.25
 ### Why saturating exponentials rather than min–max
 
 Min–max normalisation (`x / x_max`) is **unstable**: one extreme student sets `x_max` and
-rescales everyone else. Add a single student with eight incidents and every other student's
-score silently drops. Scores then cannot be compared across sections, across cohorts, or
-across time — which destroys any longitudinal claim.
+rescales everyone else. Add a single student with eight early departures and every other
+student's score silently drops. Scores then cannot be compared across sections, across cohorts,
+or across time — which destroys any longitudinal claim.
 
 The saturating form uses **fixed** constants, so a given behaviour always maps to the same
-score. It also reflects the intended meaning: the difference between zero and one incident
-matters much more than the difference between nine and ten.
+score. It also reflects the intended meaning: the difference between zero and one early
+departure matters much more than the difference between nine and ten.
 
 `ν` and `μ` are **policy parameters**, set with the school and reported as configuration —
 `mu_tardiness` and `nu_early_departure` in `config.toml`. ν = 0.25 places four early
@@ -317,6 +359,21 @@ Risk = 0.1884 × 0.42  +  0.0810 × 0.4512  +  0.7306 × 0.3935
 → **0.40, Monitor band.** `tests/test_risk.py` asserts these figures to four decimal
 places, so this example and the code cannot drift apart silently.
 
+### Prohibited-item incidents: a floor, not a fourth term
+
+A confirmed incident does **not** enter the formula above. It sets a **minimum band** instead,
+keyed to severity — see [prohibited-items.md](prohibited-items.md) §9 for the full argument and
+§7 below for the table.
+
+The short version is arithmetic rather than principle. Through the same saturating transform,
+one incident maps to `1 − exp(−0.25) = 0.2212`, and Monitor starts at 0.30. Raising a band on a
+single incident would need a weight of `0.30 / 0.2212 = 1.356`, and **the weights sum to 1** — so
+a student found with a bladed weapon would still have scored *"Low"* however the panel weighted
+it. A weighted fourth criterion cannot express "this one event matters on its own"; a floor can.
+
+The composite is unchanged by an incident. Only the band moves, and `risk_scores.band_source`
+records which rule decided it.
+
 ---
 
 ## 7. Risk bands
@@ -331,6 +388,29 @@ places, so this example and the code cannot drift apart silently.
 **These cutoffs are placeholders and must be set by the school.** A band boundary determines
 whether a real student is referred; that is an institutional decision, not a researcher's.
 Record who set them and when.
+
+### The incident floor
+
+A confirmed prohibited-item incident sets a **minimum** band. It may raise a band, never lower
+one, and it leaves the composite untouched.
+
+| Severity | Typical category | Minimum band |
+|---|---|---|
+| 1 | tool with a legitimate school use | Monitor |
+| 2 | other prohibited object | Monitor |
+| 3 | pointed, not bladed | Elevated |
+| 4 | bladed, or blunt impact | High |
+
+`config.toml` → `[risk.incident_floor]`, and like the cutoffs above these are the school's to
+set. The Risk sheet reports the count, the categories, the maximum severity and a **`Band
+source`** column saying which rule applied — without it a *High* against a 0.06 composite reads
+as an arithmetic error.
+
+> **Why the adopted weights of §5.1 mattered.** Under the illustrative matrix the largest
+> reachable composite was `0.1884 + 0.0810 = 0.2694`, below the 0.30 cutoff, so **no student
+> could leave Low by any combination of absence and lateness** — the floor was the only thing
+> that could flag anyone. With absence weighted at 0.6833 the score does its own work again:
+> a student absent every day reaches 0.68 and lands in Elevated on the composite alone.
 
 The score **recommends review. It never imposes a sanction.** A person decides in every case —
 the same principle as Rule 1 in [flow.md](flow.md).

@@ -292,7 +292,7 @@ The detail is delivered by a person, to a verified parent, in the school office.
 
 ---
 
-## 9. Why incidents are not scored
+## 9. Why incidents are not weighted, and what they do instead
 
 The tempting move is to restore incidents as the third AHP criterion, which is what they were
 before the detector was deferred and `early_departure` took the slot.
@@ -304,10 +304,50 @@ essentially never happened.
 
 - Keep `early_departure` as the third criterion. n = 3, so the consistency ratio stays meaningful
   — a 2×2 matrix is perfectly consistent by construction and the CR check would be vacuous.
-- Report incidents **descriptively**: counts by category and severity, and the confirmation rate.
 - [analytics-model.md](analytics-model.md) §4's logistic feature *"cumulative confirmed
   incidents"* should be **dropped from the model** for the same reason. A near-constant-zero
   predictor is not a predictor, and fitting it then ignoring it is worse than not fitting it.
+
+### The arithmetic settles it independently
+
+Even setting the variance argument aside, a weighted term **could not have worked**. Through the
+same saturating transform the other criteria use, one incident maps to
+
+```
+1 − exp(−0.25 × 1) = 0.2212          Monitor starts at 0.30
+```
+
+so raising a band on a single incident would need a weight of `0.30 / 0.2212 = 1.356`. **The
+weights sum to 1.** A student found at the gate with a bladed weapon would still have read
+*"Low"* no matter what the panel decided. Pushing the rate up until it fires (ξ ≥ 1.5) turns the
+curve into a step function — which is the floor below, with six extra pairwise judgements and a
+rewritten methodology section attached.
+
+### What incidents do instead: a floor on the band
+
+A confirmed incident sets a **minimum band**, keyed to severity. It raises a band, never lowers
+one, and it does not change the composite.
+
+| Severity | Typical category | Minimum band |
+|---|---|---|
+| 1 | tool with a legitimate school use | Monitor |
+| 2 | other prohibited object | Monitor |
+| 3 | pointed, not bladed | Elevated |
+| 4 | bladed, or blunt impact | High |
+
+This is a **policy rule, not a statistical estimate** — which is exactly why the objection above
+does not apply to it. There is no coefficient to defend, nothing to validate, and no weight
+anybody has to justify. The cutoffs live in `config.toml` under `[risk.incident_floor]` and are
+the school's to set, like the band boundaries themselves.
+
+The Risk sheet carries the count, the categories, the maximum severity, and a **`Band source`**
+column naming which rule decided the band. Without that last column a stored *High* against a
+0.06 composite reads as an arithmetic error.
+
+- Report incidents **descriptively** in the aggregate: counts by category and severity, and the
+  confirmation rate. The Screening sheet stays counts-only — see §8. Per-student detail belongs
+  on the Risk sheet, which already names students, and carries the **category and severity but
+  never `item_description`**.
 
 ---
 

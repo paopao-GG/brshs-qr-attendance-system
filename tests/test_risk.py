@@ -257,3 +257,156 @@ def test_band_counts_are_summarised(conn, make_student, config):
     counts = risk.compute(conn, config).by_band()
     assert sum(counts.values()) == 1
     assert set(counts) == {"Low", "Monitor", "Elevated", "High"}
+
+
+# --- prohibited-item incidents ----------------------------------------------
+#
+# A floor on the band, never a term in the composite. The reason is arithmetic and is
+# asserted below: a weighted term could not have raised a band at all.
+
+
+def incident(conn, student_id, *, severity=4, category="bladed",
+             description="folding penknife", day="2026-09-02"):
+    """One confirmed incident, through the real chain: scan -> screening -> incident."""
+    from trackify.core.db import utcnow
+
+    scan_id = conn.execute(
+        """INSERT INTO scan_events (student_id, scanned_at, date, direction, method)
+           VALUES (?, ?, ?, 'in', 'scan')""",
+        (student_id, f"{day}T07:00:00", day)).lastrowid
+    event = conn.execute(
+        """INSERT INTO screening_events (scan_event_id, occurred_at, metal_detected,
+               outcome) VALUES (?, ?, 1, 'prohibited')""",
+        (scan_id, utcnow())).lastrowid
+    conn.execute(
+        """INSERT INTO incidents (student_id, screening_event_id, occurred_at, category,
+               item_description, severity)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (student_id, event, f"{day}T07:05:00", category, description, severity))
+
+
+def test_a_weighted_term_could_not_have_reached_monitor(config):
+    """Why this is a floor and not a fourth AHP criterion.
+
+    One incident through the usual saturating transform is 0.2212, and Monitor starts
+    at 0.30. Reaching Monitor on one incident alone would need a weight of 1.356 -- and
+    weights sum to 1. A student found with a bladed weapon would still have read "Low"
+    however the panel weighted it.
+    """
+    one = risk.saturating(1, config.risk.nu_early_departure)
+
+    assert round(one, 4) == 0.2212
+    assert one < config.risk.band_low, "even at weight 1.0 it cannot reach Monitor"
+    assert round(config.risk.band_low / one, 3) == 1.356
+
+
+# --- the floor --------------------------------------------------------------
+
+@pytest.mark.parametrize("severity,band", [
+    (1, "Monitor"), (2, "Monitor"), (3, "Elevated"), (4, "High"),
+])
+def test_each_severity_floors_at_its_configured_band(conn, make_student, config,
+                                                     severity, band):
+    a = make_student()
+    record(conn, a, day(1), "present")
+    incident(conn, a, severity=severity)
+
+    row = risk.compute(conn, config).rows[0]
+    assert row.band == band
+    assert row.max_severity == severity
+
+
+def test_a_clean_record_is_still_low(conn, make_student, config):
+    """The floor must not fire for a student who has done nothing."""
+    a = make_student()
+    record(conn, a, day(1), "present")
+
+    row = risk.compute(conn, config).rows[0]
+    assert row.band == "Low"
+    assert row.n_incidents == 0
+    assert row.band_source == risk.COMPOSITE
+
+
+def test_a_floor_never_lowers_a_band(config):
+    """A severity-1 tool must not drag a genuinely high-scoring student downwards."""
+    assert risk.worst_of("High", "Monitor") == "High"
+    assert risk.worst_of("Elevated", "Monitor") == "Elevated"
+    assert risk.worst_of("Low", "High") == "High"
+    assert risk.worst_of("Monitor", None) == "Monitor"
+
+
+def test_the_composite_is_not_changed_by_an_incident(conn, make_student, config):
+    """The score keeps meaning what it meant. Only the band moves."""
+    a = make_student()
+    for index in range(1, 4):
+        record(conn, a, day(index), "late")
+    before = risk.compute(conn, config).rows[0]
+
+    incident(conn, a, severity=4)
+    after = risk.compute(conn, config).rows[0]
+
+    assert after.composite == before.composite
+    assert after.band == "High" and before.band == "Low"
+
+
+def test_the_band_source_says_which_rule_applied(conn, make_student, config):
+    a = make_student()
+    record(conn, a, day(1), "present")
+    incident(conn, a, severity=3)
+
+    row = risk.compute(conn, config).rows[0]
+    assert row.band_source == "incident floor (severity 3)"
+
+
+def test_the_floor_comes_from_config_not_from_code(conn, make_student, config):
+    import dataclasses
+
+    a = make_student()
+    record(conn, a, day(1), "present")
+    incident(conn, a, severity=1)
+
+    lenient = dataclasses.replace(
+        config, risk=dataclasses.replace(
+            config.risk, incident_floor=("Low", "Low", "Low", "Low")))
+
+    assert risk.compute(conn, config).rows[0].band == "Monitor"
+    assert risk.compute(conn, lenient).rows[0].band == "Low"
+
+
+def test_the_kinds_are_reported_without_the_description(conn, make_student, config):
+    a = make_student()
+    record(conn, a, day(1), "present")
+    incident(conn, a, category="bladed", description="folding penknife")
+    incident(conn, a, category="pointed", description="sharpened compass",
+             day="2026-09-03", severity=3)
+
+    row = risk.compute(conn, config).rows[0]
+    assert row.n_incidents == 2
+    assert row.incident_kinds == ("bladed", "pointed"), "sorted, so exports are stable"
+    assert "penknife" not in repr(row), "RA 10173: the description never leaves the table"
+
+
+def test_an_incident_after_the_end_date_is_not_counted(conn, make_student, config):
+    """occurred_at is a timestamp, so an end DATE has to reach the end of that day."""
+    a = make_student()
+    record(conn, a, day(1), "present")
+    incident(conn, a, severity=4, day="2026-09-10")
+
+    assert risk.compute(conn, config, end="2026-09-09").rows[0].band == "Low"
+    assert risk.compute(conn, config, end="2026-09-10").rows[0].band == "High"
+
+
+def test_a_persisted_score_records_the_incident_and_why(conn, section, make_student,
+                                                        config):
+    """Without band_source a stored 'High' on a 0.06 composite looks like a bug."""
+    a = make_student()
+    record(conn, a, day(1), "present")
+    incident(conn, a, severity=4)
+
+    risk.compute(conn, config, persist=True)
+
+    row = conn.execute("SELECT * FROM risk_scores").fetchone()
+    assert row["incidents"] == 1
+    assert row["band"] == "High"
+    assert row["band_source"] == "incident floor (severity 4)"
+    assert row["composite"] < config.risk.band_low, "the band came from the floor"

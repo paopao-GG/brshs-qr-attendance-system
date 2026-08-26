@@ -70,3 +70,21 @@ nu_early_departure = 0.25
 low = 0.30
 monitor = 0.55
 elevated = 0.75
+# Who set these and when. A boundary decides whether a real student is referred, so it
+# is an institutional decision -- leave these blank and every export says the cutoffs
+# are placeholders, which is what an unattributed cutoff is.
+set_by = "Guidance counsellor and discipline officer, Bicol Regional Science High School"
+set_on = "2026-08-27"
+
+# A confirmed prohibited-item incident sets a MINIMUM band, by severity. It is a floor
+# and not a weighted criterion for a concrete reason: one incident saturates to 0.2212,
+# below the 0.30 Monitor cutoff, so reaching Monitor on one incident alone would need a
+# weight of 1.356 and the weights sum to 1. See docs/prohibited-items.md section 9.
+#
+# A floor may RAISE a band, never lower one. These are the school's decision, like the
+# cutoffs above.
+[risk.incident_floor]
+severity_1 = "Monitor"      # tool with a legitimate school use (scissors, compass)
+severity_2 = "Monitor"      # other prohibited object
+severity_3 = "Elevated"     # pointed, not bladed
+severity_4 = "High"         # bladed, or blunt impact

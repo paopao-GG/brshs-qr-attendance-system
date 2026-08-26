@@ -61,6 +61,50 @@ def test_rates_are_none_not_zero_when_undefined(conn, make_student):
 
 # --- the procedure metrics --------------------------------------------------
 
+def test_coverage_ignores_the_out_scan(conn, make_student):
+    """Screening happens at the gate on the way IN.
+
+    Every student also scans out, so dividing by both directions caps coverage near
+    50% however thorough the guards are -- a perfect procedure would have reported
+    itself as half-failing. Caught on simulated data reading 51.4%.
+    """
+    a = make_student()
+    entry = scan(conn, a, "2026-09-01T07:00:00")
+    conn.execute(
+        """INSERT INTO scan_events (student_id, scanned_at, date, direction, method)
+           VALUES (?, '2026-09-01T16:10:00', '2026-09-01', 'out', 'scan')""", (a,))
+    screen(conn, entry, "clear")
+
+    summary = screening.summarise(conn)
+    assert summary.scans == 2
+    assert summary.arrivals == 1
+    assert summary.coverage == 1.0, "the one arrival was screened; coverage is 100%"
+
+
+def test_a_not_screened_row_does_not_count_as_screened(conn, make_student):
+    """It is a record that screening did NOT happen. Counting it would put coverage at
+    100% exactly when nobody was being screened."""
+    a, b = make_student(first="A", last="One"), make_student(first="B", last="Two")
+    screen(conn, scan(conn, a), "clear")
+    screen(conn, scan(conn, b), "not_screened")
+
+    summary = screening.summarise(conn)
+    assert summary.screened == 2, "both are screening records"
+    assert summary.examined == 1, "but only one person was actually examined"
+    assert summary.coverage == 0.5
+
+
+def test_alarm_rate_is_over_the_bags_actually_examined(conn, make_student):
+    students = [make_student(first=f"S{n}", last=f"T{n}") for n in range(3)]
+    scans = [scan(conn, s) for s in students]
+    screen(conn, scans[0], "clear", metal=0)
+    screen(conn, scans[1], "common_items", metal=1)
+    screen(conn, scans[2], "not_screened", metal=0)
+
+    summary = screening.summarise(conn)
+    assert summary.alarm_rate == 0.5, "1 alarm out of 2 examined, not 3 records"
+
+
 def test_coverage_is_screenings_over_scans(conn, make_student):
     a, b = make_student(first="A", last="One"), make_student(first="B", last="Two")
     first = scan(conn, a)

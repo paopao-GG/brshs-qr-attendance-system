@@ -53,6 +53,11 @@ MIN_ROWS = 50
 MODEL_FITTED = "logistic model"
 MODEL_OBSERVED = "observed rate (model not fitted)"
 
+# Bands worst-last, so a floor can be compared against a computed band by index.
+BAND_ORDER = ("Low", "Monitor", "Elevated", "High")
+
+COMPOSITE = "composite"
+
 
 @dataclass(frozen=True)
 class StudentRisk:
@@ -70,6 +75,12 @@ class StudentRisk:
     n_early: int
     n_absent: int
     n_days: int
+    # Confirmed prohibited-item incidents. These do NOT enter the composite -- see
+    # floor_for() for why -- but they can raise the band, and band_source records it.
+    n_incidents: int = 0
+    incident_kinds: tuple[str, ...] = ()
+    max_severity: int = 0
+    band_source: str = COMPOSITE
 
 
 @dataclass(frozen=True)
@@ -135,6 +146,35 @@ def band_for(score: float, config) -> str:
     return "High"
 
 
+def floor_for(max_severity: int, config) -> str | None:
+    """The minimum band a confirmed prohibited-item incident forces, or None.
+
+    A floor rather than a fourth weighted criterion, and the arithmetic is the reason.
+    One incident through the usual saturating transform is 1 - exp(-0.25) = 0.2212,
+    while Monitor starts at 0.30. Reaching Monitor on a single incident would need a
+    weight of 0.30/0.2212 = 1.356, and the weights sum to 1 -- so a student found with
+    a bladed weapon would still read "Low" no matter how the panel weighted it. Raising
+    the rate until it fires (xi >= 1.5) turns the curve into a step function, which is
+    this rule with extra arithmetic attached.
+
+    prohibited-items.md section 9's objection stands and is why there is no weight
+    here: a criterion recorded once or twice in a study cannot be validated, and a
+    weight for it cannot be defended. A severity-keyed floor is a policy rule, so there
+    is no coefficient to defend in the first place.
+    """
+    if max_severity < 1:
+        return None
+    floor = config.risk.incident_floor
+    return floor[min(max_severity, len(floor)) - 1]
+
+
+def worst_of(band: str, floor: str | None) -> str:
+    """The higher of a computed band and a floor. A floor never lowers a band."""
+    if floor is None:
+        return band
+    return max(band, floor, key=BAND_ORDER.index)
+
+
 def saturating(count: int, rate: float) -> float:
     """1 - exp(-rate * count), the shape both the T and E terms use.
 
@@ -164,6 +204,37 @@ def _history(conn: sqlite3.Connection, *, section_id: int | None = None,
     for row in conn.execute(" ".join(sql), params):
         history.setdefault(row["student_id"], []).append(row)
     return history
+
+
+def _incidents(conn: sqlite3.Connection, *, end: str | None = None) -> dict[int, dict]:
+    """Confirmed prohibited-item incidents per student.
+
+    An incidents row exists only where a guard confirmed a prohibited item --
+    screening.Outcome.writes_incident is true for PROHIBITED alone -- so this is
+    already "confirmed" without joining screening_events.
+
+    occurred_at is a full timestamp, so an end DATE has to reach the end of that day;
+    the same "T23:59:59" the screening summary uses.
+    """
+    sql = ["""SELECT student_id, COUNT(*) AS n, MAX(severity) AS max_severity,
+                     GROUP_CONCAT(DISTINCT category) AS kinds
+              FROM incidents"""]
+    params: list = []
+    if end:
+        sql.append("WHERE occurred_at <= ?")
+        params.append(end + "T23:59:59")
+    sql.append("GROUP BY student_id")
+
+    return {
+        row["student_id"]: {
+            "n": row["n"],
+            "max_severity": row["max_severity"] or 0,
+            # GROUP_CONCAT gives no ordering guarantee; sorted so the export column is
+            # stable between runs rather than shuffling on every export.
+            "kinds": tuple(sorted((row["kinds"] or "").split(","))) if row["kinds"] else (),
+        }
+        for row in conn.execute(" ".join(sql), params)
+    }
 
 
 def _rows_for_fit(history: dict[int, list[sqlite3.Row]]):
@@ -309,6 +380,9 @@ def compute(conn: sqlite3.Connection, config, *, section_id: int | None = None,
                FROM students s JOIN sections sec ON sec.id = s.section_id""")
     }
 
+    # Fetched once rather than per student: 103 students is 103 queries otherwise.
+    incidents = _incidents(conn, end=end)
+
     rows: list[StudentRisk] = []
     for student_id, days in history.items():
         student = students.get(student_id)
@@ -337,14 +411,28 @@ def compute(conn: sqlite3.Connection, config, *, section_id: int | None = None,
                      + weights.tardiness * tardiness
                      + weights.early_departure * early)
 
+        # The composite is untouched by an incident. Only the band moves, and
+        # band_source records which rule decided it -- otherwise a stored "High" on a
+        # low composite looks like an arithmetic error six months from now.
+        incident = incidents.get(student_id)
+        max_severity = incident["max_severity"] if incident else 0
+        scored = band_for(composite, config)
+        floor = floor_for(max_severity, config)
+        band = worst_of(scored, floor)
+        band_source = (f"incident floor (severity {max_severity})"
+                       if band != scored else COMPOSITE)
+
         rows.append(StudentRisk(
             student_id=student_id, lrn=student["lrn"],
             name=f"{student['last_name']}, {student['first_name']}",
             section=f"{student['grade_level']}-{student['section_name']}",
             p_absent=p_absent, p_absent_source=source,
             tardiness=tardiness, early_departure=early,
-            composite=composite, band=band_for(composite, config),
+            composite=composite, band=band,
             n_late=n_late, n_early=n_early, n_absent=n_absent, n_days=len(counted),
+            n_incidents=incident["n"] if incident else 0,
+            incident_kinds=incident["kinds"] if incident else (),
+            max_severity=max_severity, band_source=band_source,
         ))
 
     rows.sort(key=lambda r: r.composite, reverse=True)
@@ -354,10 +442,12 @@ def compute(conn: sqlite3.Connection, config, *, section_id: int | None = None,
             conn.execute(
                 """INSERT INTO risk_scores
                    (student_id, computed_at, p_absent, tardiness_score,
-                    early_departure_score, composite, band, weights_version)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    early_departure_score, composite, band, incidents, band_source,
+                    weights_version)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (row.student_id, computed_at, row.p_absent, row.tardiness,
-                 row.early_departure, row.composite, row.band, weights.version),
+                 row.early_departure, row.composite, row.band, row.n_incidents,
+                 row.band_source, weights.version),
             )
 
     return RiskReport(rows=rows, weights=weights, model=quality,

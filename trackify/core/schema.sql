@@ -157,6 +157,12 @@ CREATE TABLE IF NOT EXISTS risk_scores (
     early_departure_score REAL    NOT NULL,
     composite             REAL    NOT NULL,
     band                  TEXT    NOT NULL,
+    -- Confirmed prohibited-item incidents, and which rule decided the band. Without
+    -- band_source a stored 'High' cannot be explained later: the composite alone would
+    -- not account for it, because an incident floor raises the band without touching
+    -- the score. See docs/prohibited-items.md section 9.
+    incidents             INTEGER NOT NULL DEFAULT 0,
+    band_source           TEXT    NOT NULL DEFAULT 'composite',
     weights_version       INTEGER REFERENCES ahp_weights(version)
 );
 CREATE INDEX IF NOT EXISTS idx_risk_student ON risk_scores(student_id, computed_at);
