@@ -55,6 +55,16 @@ ICONS: dict[str, str] = {
         'v0.5"/>'
         '<line x1="12" y1="17" x2="12" y2="17.2"/>'
     ),
+    # --- attendance statuses ------------------------------------------------
+    # Bare marks, no enclosing circle: at register size a circle collapses into a
+    # smudge and the check and the cross stop being distinguishable, which is the
+    # only job these two have.
+    "present": '<path d="M4.5 12.5 L9.5 17.5 L19.5 6.5"/>',
+    "absent": (
+        '<line x1="6" y1="6" x2="18" y2="18"/>'
+        '<line x1="18" y1="6" x2="6" y2="18"/>'
+    ),
+
     # --- outcomes and navigation -------------------------------------------
     "no_metal": (              # a tick in a circle
         '<circle cx="12" cy="12" r="9"/>'

@@ -74,7 +74,10 @@ CREATE TABLE IF NOT EXISTS attendance_days (
     minutes_on_campus INTEGER,
     superseded_by     INTEGER REFERENCES attendance_days(id) ON DELETE SET NULL,
     corrected_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    -- See audit_log.actor_name. corrected_by stays NULL until real logins exist.
+    corrected_by_name TEXT,
     correction_reason TEXT,
+    correction_type   TEXT,
     created_at        TEXT    NOT NULL
 );
 -- One live row per student per day; superseded rows are exempt so history is kept.
@@ -107,6 +110,14 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX IF NOT EXISTS idx_notif_status   ON notifications(status);
 CREATE INDEX IF NOT EXISTS idx_notif_guardian ON notifications(guardian_mobile, status);
 
+-- Small key/value store for things a person changes at runtime. The records
+-- password hash lives here rather than in config.toml, which is committed to git.
+CREATE TABLE IF NOT EXISTS app_settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS audit_log (
     id          INTEGER PRIMARY KEY,
     actor_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -116,6 +127,10 @@ CREATE TABLE IF NOT EXISTS audit_log (
     old_value   TEXT,
     new_value   TEXT,
     reason      TEXT,
+    -- A name someone TYPED, not an identity the system verified. Kept apart from
+    -- actor_id on purpose: one is a claim, the other would be proof, and conflating
+    -- them would overstate what the audit trail can support.
+    actor_name  TEXT,
     occurred_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_log(occurred_at);

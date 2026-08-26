@@ -37,12 +37,14 @@ from qtpy.QtWidgets import (
 
 from ..core.config import PROJECT_ROOT
 from ..core import custody
+from ..core.security import AttemptGate
 from ..core import screening as screening_taxonomy
 from ..core.screening import Outcome as ScreeningOutcome
 from ..core.service import Presentation, ScanPresentation, ScanService
 from ..notify.limits import TokenBucket
 from .camera import CameraPanel
 from . import icons
+from .records import PasswordDialog, RecordsPage
 from .screening import CustodyDialog, IncidentDialog
 from .worker import QueueStats
 
@@ -164,6 +166,7 @@ class KioskWindow(QWidget):
         self._awaiting_student: int | None = None
         self._result_state = "neutral"
         self._avatar_initials = ""
+        self._records_gate = AttemptGate()
 
         self._clock_timer = QTimer(self)
         self._clock_timer.timeout.connect(self._tick_clock)
@@ -230,6 +233,15 @@ class KioskWindow(QWidget):
         wait_layout.addWidget(self.clock_date)
         wait_layout.addSpacing(28)
         wait_layout.addWidget(self.waiting_title)
+
+        # Only on the waiting screen, never over a result: docs/flow.md 8 says the
+        # station screen shows the current student and nothing else. Staff use this
+        # after the last student has come through.
+        wait_layout.addSpacing(24)
+        self.btn_records = self._screening_button(
+            "Attendance records", "ScreeningMinor", self._open_records,
+        )
+        wait_layout.addWidget(self.btn_records, 0, Qt.AlignCenter)
         wait_row.addWidget(text_side, 0, Qt.AlignVCenter)
         stage_layout.addWidget(self.waiting, 0, Qt.AlignCenter)
 
@@ -300,6 +312,18 @@ class KioskWindow(QWidget):
         self.inspection = self._build_inspection()
         self.inspection.hide()
         stage_layout.addWidget(self.inspection)
+
+        # --- records page ---
+        # A page rather than a separate window, on purpose. A separate window takes
+        # focus off scan_input, so the gate would silently stop accepting scans while
+        # records were open with nothing on screen to say so.
+        self.records = RecordsPage(
+            self.service.conn,
+            school_name=self.service.config.school.name,
+        )
+        self.records.closed.connect(self._close_records)
+        self.records.hide()
+        stage_layout.addWidget(self.records)
 
         stage_layout.addStretch(1)
 
@@ -559,6 +583,13 @@ class KioskWindow(QWidget):
             self._render(ScanService.rate_limited())
             return
 
+        # The gate always wins. A student at the lens outranks a register on screen,
+        # and leaving attendance records open at a gate is exactly what flow.md 8
+        # forbids. Nothing is lost by closing: corrections save one at a time, so
+        # there is never a half-finished form to discard.
+        if self.records_open:
+            self._close_records()
+
         # The gate blocks until the current student has been answered for. A refused
         # scan writes NOTHING -- no scan_events row, no attendance, no notification --
         # so the student simply scans again once the screen is free, and the debounce
@@ -661,6 +692,35 @@ class KioskWindow(QWidget):
         # This is also the hook point for the Pi's GPIO buzzer: the outcome state and
         # its duration are both known right here.
         self.camera.hold(presentation.hold_ms)
+
+    # -- attendance records ---------------------------------------------------
+
+    def _open_records(self) -> None:
+        """Password on EVERY open, not once per session.
+
+        The kiosk stands at a gate. "Unlocked earlier today" is not a reason to show
+        one student's history to whoever is standing in front of it now.
+        """
+        dialog = PasswordDialog(self.service.conn, self._records_gate, self)
+        if dialog.exec() != QDialog.Accepted:
+            self.scan_input.setFocus()
+            return
+
+        self.records.refresh()
+        self.waiting.hide()
+        self.result.hide()
+        self.records.show()
+        self.stage.setProperty("state", "records")
+        _restyle(self.stage)
+        self.scan_input.setFocus()
+
+    def _close_records(self) -> None:
+        self.records.hide()
+        self._show_waiting()
+
+    @property
+    def records_open(self) -> bool:
+        return self.records.isVisible()
 
     # -- screening (docs/prohibited-items.md) --------------------------------
 
@@ -817,6 +877,7 @@ class KioskWindow(QWidget):
         self.stage.setProperty("state", "neutral")
         _restyle(self.stage)
         self.inspection.hide()
+        self.records.hide()
         self.result.hide()
         self.waiting.show()
         self.scan_input.setFocus()

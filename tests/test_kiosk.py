@@ -702,3 +702,20 @@ def test_the_strip_falls_back_to_initials(qtbot, kiosk, student):
 
     assert kiosk.inspect_avatar.text() == "JD"
     assert kiosk.inspect_avatar.pixmap().isNull()
+
+
+def test_the_scanner_input_stays_invisible_under_the_stylesheet(qtbot, kiosk):
+    """The hazard the records styling introduced: a general QLineEdit rule that sets
+    padding or min-height fights this widget's max-height and puts a stray input box
+    under the clock on the gate screen."""
+    from pathlib import Path
+    from qtpy.QtWidgets import QApplication
+
+    QApplication.instance().setStyleSheet(
+        Path("trackify/ui/style.qss").read_text(encoding="utf8")
+    )
+    kiosk.show()
+    qtbot.wait(20)
+
+    assert kiosk.scan_input.height() <= 2, kiosk.scan_input.height()
+    assert kiosk.scan_input.sizeHint().height() <= 2 or kiosk.scan_input.height() <= 2

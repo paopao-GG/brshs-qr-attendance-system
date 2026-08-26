@@ -76,10 +76,13 @@ def main() -> int:
         # Order matters: children before parents. incidents and custody_items point at
         # screening_events, which points at scan_events with ON DELETE RESTRICT, so
         # deleting scans first fails with a bare "FOREIGN KEY constraint failed".
+        # app_settings is cleared too, so a reset returns to genuine first-run state:
+        # the records password is unset and has to be chosen. A demo database handed
+        # over with a password only I know would be worse than one with none.
         for table in ("risk_scores", "incidents", "custody_items", "hazard_requests",
                       "screening_events", "notifications", "attendance_days",
                       "scan_events", "audit_log", "ahp_weights", "sms_ledger",
-                      "school_days", "students", "sections", "users"):
+                      "school_days", "students", "sections", "users", "app_settings"):
             conn.execute(f"DELETE FROM {table}")
         # No AUTOINCREMENT in the schema, so rowids restart at 1 on their own --
         # which keeps the demo QR payloads stable across resets.

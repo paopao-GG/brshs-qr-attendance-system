@@ -115,6 +115,7 @@ QWidget#Stage[state="neutral"]   { background: #171F1C; }
 /* A ground that says "different mode", not one that implies an outcome --
    nothing has been decided yet when this page is up. */
 QWidget#Stage[state="inspect"]   { background: #12161F; }
+QWidget#Stage[state="records"]   { background: #10161A; }
 
 QLabel#Headline[state="in"]       { color: #4ADE80; }
 QLabel#Headline[state="out"]      { color: #58B6F5; }
@@ -202,10 +203,18 @@ QLabel#StatusSep {
 
 /* --- hidden scanner input --------------------------------------------- */
 
+/* The scanner input is deliberately invisible. Every property the general QLineEdit
+   rule below sets has to be cancelled here explicitly -- min-height in particular
+   will fight max-height and put a stray input box under the clock on the gate. */
 QLineEdit#ScanInput {
     background: transparent;
     border: none;
+    border-radius: 0;
     color: transparent;
+    selection-background-color: transparent;
+    padding: 0;
+    margin: 0;
+    min-height: 0;
     max-height: 1px;
 }
 
@@ -359,3 +368,196 @@ QToolButton#InspectCardDanger:hover {
     border-color: #8C4A48;
 }
 QToolButton#InspectCardDanger:pressed { background: #372628; }
+
+/* ======================================================================== */
+/* Records: tables, inputs, toolbar                                          */
+/* ======================================================================== */
+
+QLabel#PageTitle {
+    font-size: 24px;
+    font-weight: 600;
+    color: #E6EDEA;
+}
+
+QLabel#PageSubtitle {
+    font-size: 16px;
+    color: #7C8C87;
+}
+
+QWidget#Legend {
+    border-top: 1px solid #232B31;
+    border-bottom: 1px solid #232B31;
+    padding: 7px 0;
+}
+
+QLabel#LegendText  { font-size: 13px; color: #8A97A8; }
+QLabel#LegendNote  { font-size: 13px; color: #6B7885; font-style: italic; }
+
+/* --- tables ------------------------------------------------------------- */
+/* There was no rule for a table anywhere in this file, which is why these read
+   as a developer tool rather than as part of the product. */
+
+QTableWidget, QTableView {
+    background: #12161B;
+    alternate-background-color: #151A20;
+    color: #D8E0DD;
+    border: 1px solid #232B31;
+    border-radius: 8px;
+    gridline-color: transparent;
+    font-size: 14px;
+    outline: none;
+}
+
+QTableWidget::item, QTableView::item {
+    padding: 0px;
+    border: none;
+}
+
+QTableWidget::item:selected, QTableView::item:selected {
+    background: #22303C;
+    color: #FFFFFF;
+}
+
+QHeaderView { background: transparent; }
+
+QHeaderView::section {
+    background: #1A2027;
+    color: #8A97A8;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.6px;
+    /* Horizontal padding stays small: Qt folds it into the minimum section width,
+       so a generous value here silently widens all 31 day columns. */
+    padding: 7px 2px;
+    border: none;
+    border-bottom: 1px solid #2A343C;
+}
+
+QHeaderView::section:vertical {
+    text-align: left;
+    padding-left: 12px;
+    color: #D8E0DD;
+    font-weight: 500;
+    letter-spacing: 0;
+    border-right: 1px solid #2A343C;
+    border-bottom: 1px solid #1E252B;
+}
+
+QTableCornerButton::section {
+    background: #1A2027;
+    border: none;
+    border-bottom: 1px solid #2A343C;
+}
+
+QScrollBar:horizontal, QScrollBar:vertical {
+    background: transparent;
+    border: none;
+}
+QScrollBar:horizontal { height: 10px; margin: 0; }
+QScrollBar:vertical   { width: 10px;  margin: 0; }
+QScrollBar::handle:horizontal, QScrollBar::handle:vertical {
+    background: #2F3A44;
+    border-radius: 5px;
+    min-width: 30px;
+    min-height: 30px;
+}
+QScrollBar::handle:hover { background: #3F4C58; }
+QScrollBar::add-line, QScrollBar::sub-line,
+QScrollBar::add-page, QScrollBar::sub-page { background: none; border: none; }
+
+/* --- inputs ------------------------------------------------------------- */
+/* Nothing styled these before, so every dialog in the application -- correction,
+   password, incident, custody -- was showing raw Qt widgets. */
+
+QLineEdit, QComboBox, QSpinBox, QPlainTextEdit {
+    background: #171D24;
+    color: #E6EDEA;
+    border: 1px solid #2A343C;
+    border-radius: 6px;
+    padding: 6px 9px;
+    min-height: 20px;
+    font-size: 14px;
+    selection-background-color: #2F5D7C;
+}
+
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QPlainTextEdit:focus {
+    border-color: #4E7FA8;
+}
+
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {
+    color: #5C666E;
+    background: #14181D;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 22px;
+}
+
+QComboBox QAbstractItemView {
+    background: #171D24;
+    color: #E6EDEA;
+    border: 1px solid #2A343C;
+    selection-background-color: #22303C;
+    outline: none;
+}
+
+QSpinBox::up-button, QSpinBox::down-button { width: 16px; border: none; }
+
+QFormLayout QLabel { color: #9AACA6; }
+
+/* --- toolbar buttons ----------------------------------------------------- */
+
+QPushButton#ToolbarButton, QPushButton#ToolbarPrimary, QPushButton#ToolbarQuiet {
+    font-size: 14px;
+    border-radius: 6px;
+    padding: 8px 16px;
+}
+
+QPushButton#ToolbarButton {
+    color: #D8E0DD;
+    background: #1C242C;
+    border: 1px solid #2A343C;
+}
+QPushButton#ToolbarButton:hover  { background: #242E38; border-color: #3C4954; }
+QPushButton#ToolbarButton:pressed { background: #2B3742; }
+
+QPushButton#ToolbarPrimary {
+    color: #0E1613;
+    background: #7FB6E8;
+    border: 1px solid #7FB6E8;
+    font-weight: 600;
+}
+QPushButton#ToolbarPrimary:hover   { background: #98C6F0; }
+QPushButton#ToolbarPrimary:pressed { background: #6BA0D0; }
+
+QPushButton#ToolbarQuiet {
+    color: #8A97A8;
+    background: transparent;
+    border: 1px solid transparent;
+}
+QPushButton#ToolbarQuiet:hover { color: #E6EDEA; border-color: #2A343C; }
+
+/* --- dialogs ------------------------------------------------------------- */
+
+QDialog {
+    background: #12161B;
+}
+
+QDialogButtonBox QPushButton {
+    font-size: 14px;
+    color: #D8E0DD;
+    background: #1C242C;
+    border: 1px solid #2A343C;
+    border-radius: 6px;
+    padding: 7px 20px;
+    min-width: 78px;
+}
+QDialogButtonBox QPushButton:hover { background: #242E38; }
+QDialogButtonBox QPushButton:default {
+    color: #0E1613;
+    background: #7FB6E8;
+    border-color: #7FB6E8;
+    font-weight: 600;
+}
+QDialogButtonBox QPushButton:default:hover { background: #98C6F0; }

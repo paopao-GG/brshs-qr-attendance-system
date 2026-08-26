@@ -218,6 +218,18 @@ Original scan records are **never overwritten.** A correction is a new row that 
 original; both remain, and the audit log preserves the chain. This protects the integrity of
 the comparison against manually recorded attendance in Phase III.
 
+**Built.** Staff reach this through a password-gated page on the kiosk — see
+[personel-access.md](personel-access.md) for the correction types, the supersede sequence, the
+edit log, and the XLSX export. Two things about it belong here:
+
+- **Access is by one shared password, so the log records *what* changed but not *who*.** A typed
+  name accompanies every correction and is stored in `corrected_by_name`; `corrected_by`, the
+  foreign key to a real account, stays NULL until individual logins exist. The distinction is
+  deliberate — a typed name is a claim, and storing it as an identity would overstate what the
+  audit trail can support.
+- **Class suspension is applied per student**, not by a flag on the day, because `school_days`
+  is keyed by date alone and has no section column.
+
 ### 4.3 Reporting
 
 ```mermaid
@@ -387,11 +399,11 @@ Mapping each feature in research question 1 of the research plan to where it liv
 |---|---|---|
 | QR code-based school identification for attendance | §3 steps 2–5 | Built |
 | Real-time and automated attendance logging | §3 step 6; §5.5 | Built |
-| Automated attendance **reporting** | §4.3 | Not yet built |
+| Automated attendance **reporting** | §4.3; [personel-access.md](personel-access.md) | Partly built — the section register and its XLSX export exist; the statistical summary does not |
 | Recording of verified prohibited-item incidents in the student's profile | §3 steps 10–14; Rule 1; [prohibited-items.md](prohibited-items.md) | Designed; being built. The detector itself is now **a separate device**, so the system records a guard's judgement rather than a sensor reading |
 | SMS notifications to parents/guardians | §3 step 16; §4.1 | Built |
 | Statistical summary of attendance data | §4.3; [analytics-model.md](analytics-model.md) | Not yet built |
-| Editable reports for excused absence, online participation, class suspension | §4.2 | Not yet built — the schema supports it (`superseded_by`, `corrected_by`, `audit_log`) |
+| Editable reports for excused absence, online participation, class suspension | §4.2; [personel-access.md](personel-access.md) | Built — all four correction types, each superseding rather than overwriting, each audited |
 
 The status column is deliberately part of this table. A traceability matrix that does not say
 what is finished tells the reader nothing they can check.

@@ -8,8 +8,12 @@ risk score. This replaces the model description previously compressed into step 
 
 ## 1. Attendance rate
 
-Sessions, not days, are the unit — the system records AM and PM separately, and counting whole
-days discards half the resolution.
+The unit is the **school day**, one in/out pair per student.
+
+> Earlier drafts of this document made AM and PM separate sessions. That was superseded when
+> scanning moved to one in/out pair per day ([flow.md](flow.md) §6), and the formula below reads
+> "sessions" throughout for continuity — but a session and a day are now the same thing. Halving
+> the resolution was a real cost of that change and belongs in the limitations.
 
 ```
 AttendanceRate_i  =  present_sessions_i / eligible_sessions_i
@@ -17,8 +21,13 @@ AttendanceRate_i  =  present_sessions_i / eligible_sessions_i
 
 | Term | Definition |
 |---|---|
-| `present_sessions` | Sessions with status `present`, `late`, or `online` |
-| `eligible_sessions` | All scheduled sessions, **minus** class suspensions, **minus** excused absences |
+| `present_sessions` | Days with status `present`, `late`, or `online` |
+| `eligible_sessions` | All recorded days, **minus** class suspensions, **minus** excused absences |
+
+Both are computed from the **live** `attendance_days` row only — superseded rows are the history
+of a correction, not additional days. `trackify/core/corrections.register()` is the
+implementation and the screen and the XLSX export both read it, so the number a teacher sees and
+the number the analysis uses cannot drift apart.
 
 Two deliberate choices:
 

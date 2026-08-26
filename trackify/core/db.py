@@ -65,6 +65,8 @@ def ensure_columns(
 # Columns added after the first release. Keep the declaration identical to schema.sql.
 MIGRATIONS: dict[str, dict[str, str]] = {
     "notifications": {"next_attempt_at": "TEXT"},
+    "attendance_days": {"corrected_by_name": "TEXT", "correction_type": "TEXT"},
+    "audit_log": {"actor_name": "TEXT"},
 }
 
 
@@ -172,12 +174,21 @@ def audit(
     old_value: str | None = None,
     new_value: str | None = None,
     reason: str | None = None,
+    actor_name: str | None = None,
 ) -> None:
+    """Append one audit row.
+
+    actor_id and actor_name are deliberately separate. actor_id is a verified account;
+    actor_name is what a person typed into a box behind a shared password. Storing a
+    typed name in actor_id would make an unverified claim look like an authenticated
+    one, which is exactly the confusion an audit trail exists to prevent.
+    """
     conn.execute(
         """INSERT INTO audit_log
-           (actor_id, action, entity_type, entity_id, old_value, new_value, reason, occurred_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (actor_id, action, entity_type,
+           (actor_id, actor_name, action, entity_type, entity_id,
+            old_value, new_value, reason, occurred_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (actor_id, actor_name, action, entity_type,
          None if entity_id is None else str(entity_id),
          old_value, new_value, reason, utcnow()),
     )
