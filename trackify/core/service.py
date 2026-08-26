@@ -83,7 +83,17 @@ class ScanService:
 
     # -- lookups ------------------------------------------------------------
 
-    def student_row(self, student_id: int) -> sqlite3.Row | None:
+    def student_row(self, lrn: str) -> sqlite3.Row | None:
+        """Resolve a scanned card to its student.
+
+        Keyed on the LRN, NOT on students.id. A printed card is a physical object that
+        outlives any particular database: keying it on an autoincrement row number means
+        a reseed silently invalidates every card already handed out. The LRN follows the
+        learner for life, so a card keyed on it stays valid across a rebuild.
+
+        Callers must use the returned row's own `id` for anything that writes -- every
+        downstream foreign key points at students(id), not at the LRN.
+        """
         # LEFT JOIN on the adviser: a section between advisers must not make a student
         # unscannable. flow.md 3 step 5 wants the adviser on screen for identity
         # confirmation, but not at the price of the gate.
@@ -93,8 +103,8 @@ class ScanService:
                FROM students s
                JOIN sections sec ON sec.id = s.section_id
                LEFT JOIN users u ON u.id = sec.adviser_id
-               WHERE s.id = ? AND s.active = 1""",
-            (student_id,),
+               WHERE s.lrn = ? AND s.active = 1""",
+            (str(lrn),),
         ).fetchone()
 
     def school_day(self, day: str | None = None):
@@ -133,7 +143,13 @@ class ScanService:
             )
 
         try:
-            student_id = qrcodes.decode(payload, self.config.secrets.qr_secret)
+            # decode() verifies the signature and hands back the number the card carries,
+            # which is the student's LRN. str(int(...)) is its exact inverse: the payload
+            # was built by encode(int(lrn)), so a stored LRN that does not survive that
+            # round trip -- one with a leading zero -- could never have produced a
+            # matching signature in the first place. roster.lrn_note() flags those at
+            # import so the failure is visible there rather than at the gate.
+            lrn = str(qrcodes.decode(payload, self.config.secrets.qr_secret))
         except qrcodes.InvalidQRCode:
             return ScanPresentation(
                 state=Presentation.UNKNOWN_CODE,
@@ -142,7 +158,7 @@ class ScanService:
                 hold_ms=5000,
             )
 
-        student = self.student_row(student_id)
+        student = self.student_row(lrn)
         if student is None:
             return ScanPresentation(
                 state=Presentation.UNKNOWN_CODE,
@@ -156,8 +172,10 @@ class ScanService:
         initials = _initials(student["first_name"], student["last_name"])
 
         with transaction(self.conn):
+            # The row's own id, never the LRN: scan_events.student_id and every table
+            # downstream of it is a foreign key to students(id).
             result: ScanResult = record_scan(
-                self.conn, student_id, at, self.config,
+                self.conn, student["id"], at, self.config,
                 operator_id=operator_id,
                 raw_payload=payload,
                 override_reason=override_reason,

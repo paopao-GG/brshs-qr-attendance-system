@@ -32,6 +32,8 @@ class QueueStats:
     provider: str = ""
     breaker_tripped: bool = False
     error: str = ""
+    provider_available: bool = True
+    provider_detail: str = ""
 
 
 class SmsWorker(QObject):
@@ -57,6 +59,7 @@ class SmsWorker(QObject):
         self._bucket = None
         self._timer = None
         self._halted = False
+        self._stopping = False
 
     def start(self) -> None:
         """Called once the thread is running, never from the UI thread."""
@@ -97,12 +100,40 @@ class SmsWorker(QObject):
             self._timer.stop()
 
     def stop_from_ui(self) -> None:
-        """Ask the worker to stop, from the UI thread, and wait for it to happen."""
-        QMetaObject.invokeMethod(self, "stop", Qt.BlockingQueuedConnection)
+        """Ask the worker to stop, from the UI thread, without waiting on it.
+
+        The flag is set first and read by _tick, so no further drain begins even if the
+        queued call has to wait behind work already running.
+
+        Deliberately NOT a BlockingQueuedConnection. That blocked the UI thread until
+        the worker returned to its event loop, which with a serial modem could be a
+        60-second send or -- against a port that never answers -- minutes of AT
+        timeouts. Quitting the kiosk froze for exactly as long as the hardware was
+        broken. The caller's thread.quit()/wait(3000) bounds the shutdown instead.
+        """
+        self._stopping = True
+        QMetaObject.invokeMethod(self, "stop", Qt.QueuedConnection)
 
     def _tick(self) -> None:
-        if self._halted or self._conn is None:
+        if self._halted or self._stopping or self._conn is None:
             return
+
+        # Asked before anything is claimed. A missing module is not a failed message:
+        # draining into one would run every queued notification through _retry_or_fail,
+        # and the backoff ladder reaches retry_limit in under two hours -- so the
+        # morning's notifications would be permanently 'failed' by mid-morning and
+        # plugging the module in at noon would send nothing. Left pending, they go out
+        # on the first tick after it comes back.
+        availability = self.provider.available()
+        if not availability.ok:
+            self.stats_changed.emit(QueueStats(
+                unsent=queue.unsent_count(self._conn),
+                provider=self.provider.name,
+                provider_available=False,
+                provider_detail=availability.reason,
+            ))
+            return
+
         try:
             stats = queue.drain(
                 self._conn, self.provider, self.config, self._breaker, self._bucket

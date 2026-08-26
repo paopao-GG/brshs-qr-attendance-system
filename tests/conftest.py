@@ -7,6 +7,27 @@ import pytest
 
 from trackify.core import db
 from trackify.core.config import load_config
+from trackify.core.qrcodes import encode
+
+TEST_SECRET = "test-secret"
+
+# Deliberately NOT equal to the row id. A card is keyed on the LRN, and if the fixture
+# made the two the same number, every scan test would pass whether or not the lookup was
+# keyed correctly -- the suite would be blind to the exact confusion it exists to catch.
+LRN_BASE = 136584120000
+
+
+def lrn_for(student_id: int) -> str:
+    """The LRN make_student() gives the student with this row id."""
+    return str(LRN_BASE + student_id)
+
+
+def payload_for(student_id: int, secret: str = TEST_SECRET) -> str:
+    """The QR payload printed on that student's card.
+
+    Built the way qr-generator.exe builds it: signed over the LRN, never the row id.
+    """
+    return encode(int(lrn_for(student_id)), secret)
 
 
 @pytest.fixture
@@ -70,6 +91,11 @@ def make_student(conn, section):
             (f"13658412{counter['n']:04d}", first, last, section,
              guardian_mobile, db.utcnow()),
         )
+        # Set from the real row id rather than the counter: ids are only sequential in a
+        # fresh database, and payload_for() has to agree with what is stored no matter
+        # what else a test inserted first.
+        conn.execute("UPDATE students SET lrn = ? WHERE id = ?",
+                     (lrn_for(cur.lastrowid), cur.lastrowid))
         return cur.lastrowid
 
     return _make

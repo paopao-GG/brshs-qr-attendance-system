@@ -25,6 +25,8 @@ from trackify.ui.camera import (
     CameraPanel, DecodeWorker, choose_format, is_compressed, pick_camera,
 )
 
+from .conftest import payload_for
+
 SECRET = "test-secret"
 
 
@@ -162,7 +164,7 @@ def test_decoding_runs_off_the_ui_thread(qtbot):
     worker.code_detected.connect(detected.append)
     thread.start()
     try:
-        payload = encode(1, SECRET)
+        payload = payload_for(1)   # LRN-length, as a real card is
         QMetaObject.invokeMethod(
             worker, "handle_frame", Qt.QueuedConnection,
             Q_ARG(QImage, qimage_of(payload)),
@@ -183,7 +185,7 @@ def test_worker_suppresses_a_held_card(qtbot):
     detected = []
     worker.code_detected.connect(detected.append)
 
-    payload = encode(2, SECRET)
+    payload = payload_for(2)
     image = qimage_of(payload)
     for _ in range(10):
         worker.handle_frame(image)
@@ -199,7 +201,7 @@ def test_worker_hold_blocks_firing(qtbot):
     worker.code_detected.connect(detected.append)
 
     worker.set_hold(5000)
-    worker.handle_frame(qimage_of(encode(3, SECRET)))
+    worker.handle_frame(qimage_of(payload_for(3)))
     assert detected == []
 
 
@@ -267,7 +269,7 @@ def test_kiosk_survives_a_camera_that_will_not_open(qtbot, kiosk, student):
     assert "error" in kiosk.status_camera.text()
 
     # The keyboard path must still record a scan.
-    kiosk.scan_input.setText(encode(student, SECRET))
+    kiosk.scan_input.setText(payload_for(student))
     kiosk.scan_input.returnPressed.emit()
     qtbot.wait(10)
     assert kiosk.headline.text() == "IN"
@@ -276,7 +278,7 @@ def test_kiosk_survives_a_camera_that_will_not_open(qtbot, kiosk, student):
 def test_camera_detection_records_a_scan(qtbot, kiosk, student):
     """The convergence proof: a camera detection and a typed payload are the same
     event as far as everything downstream is concerned."""
-    kiosk.camera.code_detected.emit(encode(student, SECRET))
+    kiosk.camera.code_detected.emit(payload_for(student))
     qtbot.wait(10)
 
     assert kiosk.headline.text() == "IN"
@@ -287,7 +289,7 @@ def test_camera_detection_records_a_scan(qtbot, kiosk, student):
 def test_preview_is_hidden_while_a_result_shows(qtbot, kiosk, student):
     """The outcome colour must fill the screen with no video panel on top of it."""
     assert kiosk.camera.isVisible()
-    kiosk.camera.code_detected.emit(encode(student, SECRET))
+    kiosk.camera.code_detected.emit(payload_for(student))
     qtbot.wait(10)
 
     assert not kiosk.camera.isVisible()

@@ -26,10 +26,11 @@ password  ── wrong ──▶ refused, 5 tries then locked for a minute
         ▼
 register for one section, one month
         │
-        ├── click a day ─▶ correct it (type, reason, your name)
-        ├── Edit log     ─▶ every change ever made to this section
-        ├── Export XLSX  ─▶ the same grid as a spreadsheet
-        └── Close        ─▶ back to the gate
+        ├── click a day     ─▶ correct it (type, reason, your name)
+        ├── Edit log        ─▶ every change ever made to this section
+        ├── Student roster  ─▶ import, edit and deactivate students (section 9)
+        ├── Export XLSX     ─▶ the same grid as a spreadsheet
+        └── Close           ─▶ back to the gate
 ```
 
 The button sits on the **waiting screen only** — never over a result. [flow.md](flow.md) §8 says
@@ -225,7 +226,88 @@ never a half-finished form to discard.
 | Piece | File |
 |---|---|
 | Correction types, the supersede sequence, the register query, the edit log | `trackify/core/corrections.py` |
+| Roster matching, the import plan, single-student edits, deactivation | `trackify/core/enrolment.py` |
+| Reading the school's spreadsheet | `trackify/core/roster.py` |
+| The roster screen and its dialogs | `trackify/ui/roster.py` |
 | Password hashing, change, and the attempt lockout | `trackify/core/security.py` |
 | XLSX export | `trackify/export/xlsx.py` |
 | Register, edit log, and all the dialogs | `trackify/ui/records.py` |
 | The button, and the gate-wins rule | `trackify/ui/kiosk.py` |
+
+---
+
+## 9. The student roster
+
+The same password opens a second screen: **Student roster**, beside the register. It is
+what makes the system maintainable without the developer — a transferee in November, or a
+parent who changes number, is a job for whoever is at the kiosk.
+
+```
+ Student roster                                          103 students · 3 sections
+ [Search…            ]  [All sections ▾]      [Import XLSX] [Edit] [Deactivate] [Back]
+ ─────────────────────────────────────────────────────────────────────────────
+  LRN            NAME                     SECTION        GUARDIAN      CONTACT
+  111995150037   Almuena, Jan Adriel M.   11-Initiative  Almuena, E.   0947 817 9371
+  432511150038   Arado, Sean Eusef M.     11-Ingenuity   -             -    no contact
+```
+
+### One rule for who is a student
+
+**An LRN and a name.** Guardian details are optional and editable on screen.
+
+This is the same rule `qr-generator` uses, and that matters more than it looks. When the
+two disagreed — the generator carding anyone with an LRN, the importer demanding a parent
+contact as well — the school ended up with **103 printed cards against a database holding
+73**, and 30 students presented a perfectly valid card that read *"Student not found"*.
+Refusing a student for an empty contact column would also mean the only way to fix that
+column is Excel, which is the thing this screen replaces.
+
+### What an import may and may not do
+
+| | |
+|---|---|
+| **May** | create a student, correct a name, move a section, **fill in** a blank guardian detail |
+| **May not** | grant or revoke `consent_on_file`, reactivate a deactivated student, **blank out** a guardian detail a person had typed in |
+
+The last one is not a detail. The office spreadsheet is chronically incomplete — that is
+the premise of this whole screen — so if importing it nulled every number staff had
+entered, the next import would quietly undo an afternoon's work. **A blank cell means "no
+information", not "delete what you have."** Clearing a number is a deliberate act in the
+edit dialog, by a person, with a reason.
+
+Consent is excluded for a different reason: `queue.py` checks it before enqueueing
+anything, and it is the RA 10173 record. An emailed spreadsheet is not the authority for
+that; a person ticking a box having seen the signed form is.
+
+### Matching, and the duplicate it prevents
+
+**LRN first, then name and section** — the order `qr-generator` uses too.
+
+Matching on LRN alone looks obviously right and quietly corrupts the roster. A student
+already in the system whose LRN is *corrected* in the sheet would not match, would import
+as new, and the school would hold that child twice: one row with their attendance
+history, another with their working card. The name fallback catches exactly that, and
+reports it as **LRN CHANGED** rather than a plain update, because it has a consequence
+that happens off-screen:
+
+> **Their printed card stops working.** The payload is signed over the LRN. Reprint it —
+> the QR generator will report that student as `UPDATED`.
+
+### Nothing is written until it is confirmed
+
+`Import XLSX` shows a preview first — new, updated, LRN changed, unchanged, not in this
+file, skipped — and writes nothing until Import is pressed. A hundred rows arriving from
+a file the adviser emailed is not something to apply on trust.
+
+Students **in the system but absent from the file are left alone**, and listed. An adviser
+importing one section's list would otherwise wipe the other two.
+
+### Deactivate, never delete
+
+`scan_events.student_id` is `ON DELETE RESTRICT`: a student who has ever scanned cannot be
+deleted, and should not be — their attendance history is the record. Deactivating sets
+`active = 0`, and `ScanService.student_row()` filters on it, so their card stops at the
+gate immediately. They stay listed, marked `inactive`, so they can be readmitted.
+
+Every insert, update and deactivation writes an `audit_log` row carrying the typed name,
+under the same limitation as §2: it records a claim, not an authenticated identity.

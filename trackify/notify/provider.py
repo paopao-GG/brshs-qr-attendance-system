@@ -34,12 +34,37 @@ class SendResult:
     retry_after: float | None = None
 
 
+@dataclass(frozen=True)
+class Availability:
+    """Whether the transport can send at all right now.
+
+    Distinct from a failed send. "The module is not plugged in" is not a message that
+    failed -- nothing was attempted, nothing should count against a retry budget, and
+    the queue should wait rather than burn the backlog down to 'failed' while the
+    hardware is absent. `reason` is written for the person standing at the kiosk, not
+    for a log.
+    """
+
+    ok: bool
+    reason: str = ""
+
+
 class NotificationProvider(ABC):
     name: str = "abstract"
 
     @abstractmethod
     def send(self, recipient: str, body: str) -> SendResult:
         """Send one message to one normalised (639XXXXXXXXX) number."""
+
+    def available(self) -> Availability:
+        """Can this provider send right now?
+
+        Called on every drain tick, so implementations must be cheap and must not
+        block: this runs on the worker thread and gates the queue behind it. Software
+        providers are always available; only the ones with hardware behind them have
+        anything to answer.
+        """
+        return Availability(ok=True)
 
     def balance(self) -> int | None:
         """Remaining credits, or None when the provider cannot report it."""

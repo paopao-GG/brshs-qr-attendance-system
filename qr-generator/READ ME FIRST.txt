@@ -49,11 +49,23 @@ WHAT YOU GET
       11-Innovative\
       manifest.csv        every code on file
       changes.csv         what changed in the last run
-      skipped.csv         students who have NO LRN in the sheet
+      skipped.csv         students who still need an LRN
+      excluded.csv        blank rows that were ignored
       run.log             a copy of the last run's messages
 
-  Students with a blank LRN cell cannot get a code. They are listed in
-  skipped.csv - send that list back to the adviser to fill in.
+  A student with no LRN cannot get a code. What happens next depends on
+  whether there is anyone to ask about it:
+
+    skipped.csv   no LRN, but a parent name or phone IS on file.
+                  These are real students. Send this list back to the
+                  adviser to fill in the LRN, then run it again.
+
+    excluded.csv  no LRN, no parent name AND no phone - the row has
+                  nothing on it but a name. These are treated as blank
+                  entries and ignored. Nothing is lost: they are all
+                  listed in the file with the cell they came from, so
+                  if one of them IS a real student, add their details
+                  to the sheet and run it again.
 
 
 PRINTING

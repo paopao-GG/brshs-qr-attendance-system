@@ -148,6 +148,10 @@ class KioskWindow(QWidget):
             capacity=service.config.scanning.input_rate_limit_per_sec,
         )
 
+        # Latched by on_alarm so the next stats tick cannot quietly clear it. Only a
+        # restart lifts it, which is right for a spend cap: it means someone looked.
+        self._sms_halted = False
+
         self._build()
         self._show_waiting()
 
@@ -320,6 +324,7 @@ class KioskWindow(QWidget):
         self.records = RecordsPage(
             self.service.conn,
             school_name=self.service.config.school.name,
+            config=self.service.config,
         )
         self.records.closed.connect(self._close_records)
         self.records.hide()
@@ -344,7 +349,7 @@ class KioskWindow(QWidget):
         self.status_session = QLabel("")
         self.status_session.setProperty("class", "status")
         self.status_provider = QLabel("")
-        self.status_provider.setProperty("class", "status")
+        self.status_provider.setObjectName("StatusProvider")
         self.status_camera = QLabel("Cam: off")
         self.status_camera.setObjectName("StatusCamera")
         self.status_unsent = QLabel("0 unsent")
@@ -939,12 +944,37 @@ class KioskWindow(QWidget):
 
     @Slot(object)
     def on_stats(self, stats: QueueStats) -> None:
-        self.status_provider.setText(f"SMS: {stats.provider}")
+        # HALTED survives the tick. The breaker fires once and the next stats update
+        # arrives four seconds later; overwriting it made the alarm effectively
+        # invisible, which is the opposite of what a spend cap is for.
+        if not self._sms_halted:
+            self._set_provider_status(stats)
         self.status_unsent.setText(
             f"{stats.unsent} unsent" if stats.unsent != 1 else "1 unsent"
         )
         self.status_unsent.setProperty("alert", "true" if stats.unsent else "false")
         _restyle(self.status_unsent)
+
+    def _set_provider_status(self, stats: QueueStats) -> None:
+        """A module that is not there is said so in the bar, not left to be inferred.
+
+        Same treatment as a dead camera: text, tooltip, amber. The alternative is a bar
+        reading "SMS: gsm" while the queue quietly waits for hardware nobody has
+        noticed is unplugged.
+        """
+        if stats.provider_available:
+            self.status_provider.setText(f"SMS: {stats.provider}")
+            self.status_provider.setToolTip("")
+            self.status_provider.setProperty("alert", "false")
+        else:
+            self.status_provider.setText(f"SMS: {stats.provider} unavailable")
+            self.status_provider.setToolTip(
+                stats.provider_detail
+                or "The notification module is not answering. Queued messages are "
+                   "waiting and will go out once it is back."
+            )
+            self.status_provider.setProperty("alert", "true")
+        _restyle(self.status_provider)
 
     @Slot(str, str)
     def on_camera_status(self, state: str, message: str) -> None:
@@ -964,7 +994,11 @@ class KioskWindow(QWidget):
 
     @Slot(str)
     def on_alarm(self, message: str) -> None:
+        self._sms_halted = True
         self.status_provider.setText("SMS: HALTED")
+        self.status_provider.setToolTip(message)
+        self.status_provider.setProperty("alert", "true")
+        _restyle(self.status_provider)
         self.status_unsent.setProperty("alert", "true")
         _restyle(self.status_unsent)
         print(f"[ALARM] {message}")

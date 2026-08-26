@@ -1,6 +1,6 @@
 """Direction state machine, debounce, and derived status.
 
-Config defaults in play: entry_open 06:00, late_threshold 07:30,
+Config defaults in play: entry_open 06:00, late_threshold 07:15,
 early_departure_cutoff 15:30, dismissal 16:00, debounce 5 min, max 6 scans/day.
 """
 

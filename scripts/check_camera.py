@@ -93,8 +93,10 @@ def main(argv=None) -> int:
         seen[payload] = seen.get(payload, 0) + 1
         # Decoding a code and accepting it are different things. Say which happened.
         try:
-            student_id = qrcodes.decode(payload, config.secrets.qr_secret)
-            verdict = f"valid, student {student_id}"
+            # A card carries the LRN, not a database row id. This says nothing about
+            # whether that learner is on the roster -- only that the signature holds.
+            lrn = qrcodes.decode(payload, config.secrets.qr_secret)
+            verdict = f"valid signature, LRN {lrn}"
         except qrcodes.InvalidQRCode as exc:
             verdict = f"REJECTED: {exc}"
         except ValueError as exc:

@@ -185,6 +185,18 @@ QLabel#StatusUnsent[alert="true"] {
     color: #F5C451;
 }
 
+QLabel#StatusProvider {
+    font-size: 13px;
+    font-weight: 600;
+    color: #7C8F89;
+}
+
+/* A GSM module that is unplugged or not answering turns amber. Without it the bar reads
+ * a confident "SMS: gsm" all day while no parent is being told anything. */
+QLabel#StatusProvider[alert="true"] {
+    color: #F5C451;
+}
+
 QLabel#StatusCamera {
     font-size: 13px;
     font-weight: 600;
@@ -238,6 +250,18 @@ QLabel#DialogHint {
 QLabel#DialogError {
     font-size: 14px;
     color: #F58F58;
+}
+
+/* A consequence the operator has to act on AWAY from this screen -- reprinting a
+   card. Amber rather than the error red: nothing has gone wrong, but ignoring it
+   leaves a student at the gate holding a code that no longer resolves. */
+QLabel#DialogWarning {
+    font-size: 14px;
+    color: #F5C451;
+    background: #2A2718;
+    border: 1px solid #4A4426;
+    border-radius: 6px;
+    padding: 8px 10px;
 }
 
 /* --- screening buttons -------------------------------------------------- */

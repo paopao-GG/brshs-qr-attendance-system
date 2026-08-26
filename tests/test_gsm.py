@@ -10,10 +10,13 @@ may already have reached the SMS centre. Getting that wrong means either a lost 
 duplicate one to a parent.
 """
 
+import time
+
 import pytest
 
-from trackify.notify.gsm import GsmProvider, ModemHealth, _digits, find_port
-from trackify.notify.provider import SendResult
+from trackify.notify.gsm import (RECHECK_SECONDS, GsmError, GsmProvider, ModemHealth,
+                                 _digits, find_port)
+from trackify.notify.provider import Availability, SendResult
 
 # What the real module answered, verbatim.
 HEALTHY = {
@@ -126,12 +129,19 @@ def test_health_parses_the_real_module_output():
     assert health.blocker() is None
 
 
-def test_echo_is_disabled_before_anything_else():
-    """With echo on, every command comes back before its reply and parsing is guesswork."""
+def test_echo_is_disabled_before_anything_parsed():
+    """With echo on, every command comes back before its reply and parsing is guesswork.
+
+    The bare AT probe is allowed to precede it -- it only looks for OK in the reply, so
+    echo cannot mislead it, and it is what stops a port that is not the module from
+    costing the whole init sequence in timeouts.
+    """
     gsm, fake = provider()
     gsm.health()                       # the port opens lazily, on first use
-    first = fake.written[0].decode()
-    assert first.strip() == "ATE0"
+    sent = [w.decode().strip() for w in fake.written]
+
+    assert sent[0] == "AT", "the liveness probe comes first"
+    assert sent[1] == "ATE0", "and nothing is parsed before echo is off"
 
 
 def test_stored_messages_are_cleared_on_open():
@@ -331,3 +341,144 @@ def test_inbox_parses_sender_and_body():
     assert messages[0]["sender"] == "+639472698918"
     assert messages[0]["body"] == "self-check"
     assert messages[0]["status"] == "REC UNREAD"
+
+
+# --- the module is not plugged in -------------------------------------------
+#
+# The kiosk builds its provider before window.show(), so anything that raises here is a
+# morning with no attendance system at all. A missing module has to be a status.
+
+
+class SilentSerial(FakeSerial):
+    """A port that opens and then says nothing.
+
+    Not a hypothetical: find_port() falls back to the first COM port, and on Windows
+    that is usually a Bluetooth virtual port rather than the module.
+    """
+
+    def write(self, data):
+        self.written.append(data)
+        return len(data)
+
+    def read(self, size=1):
+        return b""
+
+
+def test_a_missing_port_is_a_status_not_a_crash(monkeypatch):
+    monkeypatch.setattr("trackify.notify.gsm.find_port", lambda: None)
+    gsm = GsmProvider()                    # must not raise
+
+    result = gsm.available()
+    assert result.ok is False
+    assert "plugged in" in result.reason
+
+
+def test_the_missing_port_message_still_names_the_fix(monkeypatch):
+    """It moved from __init__ into _open(); the operator still needs the command."""
+    monkeypatch.setattr("trackify.notify.gsm.find_port", lambda: None)
+
+    with pytest.raises(GsmError) as excinfo:
+        GsmProvider()._open()
+    assert "scripts/test_sms.py --check" in str(excinfo.value)
+
+
+def test_a_port_appearing_later_is_picked_up(monkeypatch):
+    """The module is plugged in after the kiosk has started. Nobody restarts a kiosk
+    mid-morning to make a cable work."""
+    ports = []
+    monkeypatch.setattr("trackify.notify.gsm.find_port",
+                        lambda: ports[0] if ports else None)
+
+    fake = FakeSerial()
+    gsm = GsmProvider(serial_factory=lambda: fake)
+    assert gsm.available(now=0.0).ok is False
+
+    ports.append("COM-LATE")
+    assert gsm.available(now=RECHECK_SECONDS + 1).ok is True
+    assert gsm.port == "COM-LATE"
+
+
+def test_a_silent_port_fails_fast_instead_of_timing_out():
+    """The whole point of the probe. Thirteen init commands at init_timeout each is
+    over two minutes of the worker thread wedged on hardware that is not there."""
+    fake = SilentSerial()
+    gsm = GsmProvider("COM-BLUETOOTH", serial_factory=lambda: fake,
+                      init_timeout=10.0)
+
+    started = time.monotonic()
+    with pytest.raises(GsmError) as excinfo:
+        gsm._open()
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 5.0, f"took {elapsed:.1f}s -- the probe is not being reached"
+    assert "did not answer AT" in str(excinfo.value)
+    assert "COM-BLUETOOTH" in str(excinfo.value)
+
+
+def test_a_silent_port_is_reported_unavailable_not_raised():
+    gsm = GsmProvider("COM-BLUETOOTH", serial_factory=SilentSerial, init_timeout=10.0)
+
+    result = gsm.available()
+    assert result.ok is False
+    assert "did not answer AT" in result.reason
+
+
+def test_a_failed_probe_closes_the_port():
+    """Left open, the next attempt would find _serial set and skip the probe -- and
+    report a dead port as healthy for the rest of the day."""
+    fake = SilentSerial()
+    gsm = GsmProvider("COM-BLUETOOTH", serial_factory=lambda: fake, init_timeout=10.0)
+
+    gsm.available()
+    assert fake.closed
+    assert gsm._serial is None
+
+
+def test_available_does_no_io_once_the_port_is_open():
+    """Called on every 4-second tick, so it has to stay free once the answer is known."""
+    gsm, fake = provider()
+    gsm.health()
+    before = len(fake.written)
+
+    assert gsm.available().ok is True
+    assert len(fake.written) == before, "available() must not talk to the module"
+
+
+def test_available_reprobes_at_most_every_fifteen_seconds():
+    """Otherwise a missing module turns a 4s tick into constant serial traffic. The
+    answer cannot change faster than someone can plug in a cable."""
+    opens = []
+
+    def factory():
+        opens.append(1)
+        return SilentSerial()
+
+    gsm = GsmProvider("COM-BLUETOOTH", serial_factory=factory, init_timeout=1.0)
+
+    for tick in range(0, 12):              # 12 ticks x 4s = 44 simulated seconds
+        gsm.available(now=tick * 4.0)
+
+    assert len(opens) == 3, f"probed {len(opens)} times in 44s, expected 3"
+
+
+def test_a_health_failure_is_returned_not_raised(monkeypatch):
+    """health() reopens the port. Unplugged between passes, that GsmError used to
+    leave send(), escape queue.drain -- which does not wrap provider.send -- and strand
+    the claimed row in 'sending' until a restart."""
+    gsm, fake = provider()
+
+    def boom(*args, **kwargs):
+        raise GsmError("module disappeared")
+
+    monkeypatch.setattr(gsm, "health", boom)
+    result = gsm.send("639171234567", "hello")
+
+    assert isinstance(result, SendResult)
+    assert result.ok is False
+    assert result.ambiguous is False, "nothing was written, so this is safe to retry"
+    assert "module disappeared" in result.error
+
+
+def test_a_working_module_reports_itself_available():
+    gsm, _ = provider()
+    assert gsm.available() == Availability(ok=True)

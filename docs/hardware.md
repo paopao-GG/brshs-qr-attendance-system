@@ -313,7 +313,7 @@ Three things decide whether a webcam works at all:
 | Concern | Requirement |
 |---|---|
 | **Camera type** | A **USB UVC webcam**, *not* the CSI Camera Module. The ribbon-cable module does not present itself through V4L2 on Bookworm or Trixie since the legacy stack was replaced by libcamera |
-| **Printed code size** | **≥ 25 mm wide.** A `TRK-1-3fb640d9` payload is a version-1/2 code of 21–25 modules; below 25 mm it stops resolving at arm's length |
+| **Printed code size** | **≥ 25 mm wide.** A `TRK-999900000018-0886acb0` payload is a version-2 code of 25 modules; below 25 mm it stops resolving at arm's length |
 | **Glare** | The most common real-world failure. Use **matte** lamination and angle the camera down ~15° so ceiling lights do not reflect into the lens |
 
 On Linux, QtMultimedia drives the camera through GStreamer. Without

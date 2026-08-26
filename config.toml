@@ -3,7 +3,7 @@
 [school]
 name = "Bicol Regional Science High School"
 entry_open = "06:00"
-late_threshold = "07:30"
+late_threshold = "07:15"
 dismissal_time = "16:00"
 early_departure_cutoff = "15:30"
 

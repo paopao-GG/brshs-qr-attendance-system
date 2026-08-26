@@ -77,7 +77,12 @@ With 20 points, statistical power is low. Report the confidence interval, not ju
 ### Verification
 
 Compute this in the system **and** independently in jamovi. Matching coefficients from two
-independent implementations is a legitimate validation step — put it in your results.
+independent implementations is a legitimate validation step — put it in your results. The
+Trend sheet of the analytics export gives you the daily rates to paste in.
+
+Both traps above are enforced in code rather than left to discipline: `trend.daily_rates()`
+returns per-day rates and nothing accumulates them, and Durbin–Watson is computed on every
+fit and reported whether or not anyone asked.
 
 ---
 
@@ -148,7 +153,18 @@ Three, not two:
 
 1. **Absence risk** — `P(absent)` from §4
 2. **Tardiness** — accumulated lateness
-3. **Prohibited-item incidents** — severity-weighted confirmed incidents
+3. **Early departure** — accumulated departures before the cutoff
+
+> **The third criterion is early departure, not prohibited-item incidents.** Earlier drafts of
+> this section named incidents, from before the metal detector became a separate device.
+> [prohibited-items.md](prohibited-items.md) §9 settles it: over a 20-day study you may record
+> zero, one or two incidents, and a criterion with almost no variance contributes noise to the
+> composite, cannot be validated against anything, and invites the obvious question of how a
+> weight was derived for something that essentially never happened. Incidents are reported
+> **descriptively** instead — counts by category and severity, and the confirmation rate.
+>
+> The schema agrees: `risk_scores.early_departure_score`, and `nu_early_departure` in
+> `config.toml`.
 
 > **Use three criteria, not two.** A 2×2 pairwise matrix is *always* perfectly consistent —
 > CR = 0 by construction, no matter what numbers you enter. With only two criteria the
@@ -175,23 +191,29 @@ w_i_raw = ( ∏ⱼ a_ij )^(1/n)          w_i = w_i_raw / Σ_k w_k_raw
 
 ### Worked example
 
-Panel judgements — absence moderately more important than tardiness (3); incidents strongly
-more important than absence (so `a₁₃` = 1/5); incidents very strongly more important than
+Panel judgements — absence moderately more important than tardiness (3); the third criterion
+strongly more important than absence (so `a₁₃` = 1/5) and very strongly more important than
 tardiness (`a₂₃` = 1/7):
 
-|  | Absence | Tardiness | Incidents |
+|  | Absence | Tardiness | Early departure |
 |---|---|---|---|
 | **Absence** | 1 | 3 | 1/5 |
 | **Tardiness** | 1/3 | 1 | 1/7 |
-| **Incidents** | 5 | 7 | 1 |
+| **Early departure** | 5 | 7 | 1 |
+
+> **These numbers are illustrative, not elicited.** They are what `ahp.DOCUMENTED_MATRIX`
+> ships as a placeholder so risk is computable on day one, and every export marks anything
+> derived from them as *not elicited*. Note in particular that they put **0.73 on early
+> departure** — plausible when the third criterion was *incidents*, and questionable now.
+> **Do not report these as findings.** Convene the panel, then `ahp.save()` the real matrix.
 
 Row geometric means:
 
 ```
-Absence    : (1 × 3 × 0.2)^(1/3)        = 0.6^(1/3)      = 0.8434
-Tardiness  : (0.3333 × 1 × 0.1429)^(1/3) = 0.04762^(1/3) = 0.3625
-Incidents  : (5 × 7 × 1)^(1/3)          = 35^(1/3)       = 3.2711
-                                                   Sum   = 4.4770
+Absence         : (1 × 3 × 0.2)^(1/3)         = 0.6^(1/3)      = 0.8434
+Tardiness       : (0.3333 × 1 × 0.1429)^(1/3)  = 0.04762^(1/3) = 0.3625
+Early departure : (5 × 7 × 1)^(1/3)            = 35^(1/3)      = 3.2711
+                                                        Sum   = 4.4770
 ```
 
 Normalised weights:
@@ -199,7 +221,7 @@ Normalised weights:
 ```
 w_A = 0.8434 / 4.4770 = 0.1884
 w_T = 0.3625 / 4.4770 = 0.0810
-w_I = 3.2711 / 4.4770 = 0.7306        (Σ = 1.0000 ✓)
+w_E = 3.2711 / 4.4770 = 0.7306        (Σ = 1.0000 ✓)
 ```
 
 ### Consistency check — required
@@ -232,7 +254,7 @@ and re-elicit. Report the final CR in your results — it is evidence the weight
 ## 6. Composite risk score
 
 ```
-Risk_i  =  w_A · P(absent)_i  +  w_T · T_i  +  w_I · S_i
+Risk_i  =  w_A · P(absent)_i  +  w_T · T_i  +  w_E · E_i
 ```
 
 All three terms are in [0, 1) and the weights sum to 1, so `Risk_i ∈ [0, 1)`.
@@ -251,18 +273,18 @@ scale first.
 T_i = 1 − exp( −μ · n_late,i )        with μ = 0.2
 ```
 
-### Incident severity term
+### Early departure term
 
 ```
-S_i = 1 − exp( −λ · Σₖ sev_k )        with λ = 0.25,  sev_k ∈ {1, 2, 3, 4}
+E_i = 1 − exp( −ν · n_early,i )       with ν = 0.25
 ```
 
-Severity is the school's existing sanction tier, so the scale is already institutionally
-defined rather than invented here.
+`n_early` counts days flagged `early_departure` — a departure before
+`early_departure_cutoff`, which `attendance.py` already records on the attendance day.
 
-| Σ sev | 0 | 1 | 2 | 4 | 8 | 12 |
+| n_early | 0 | 1 | 2 | 4 | 8 | 12 |
 |---|---|---|---|---|---|---|
-| **S** | 0.000 | 0.221 | 0.393 | 0.632 | 0.865 | 0.950 |
+| **E** | 0.000 | 0.221 | 0.393 | 0.632 | 0.865 | 0.950 |
 
 ### Why saturating exponentials rather than min–max
 
@@ -275,24 +297,25 @@ The saturating form uses **fixed** constants, so a given behaviour always maps t
 score. It also reflects the intended meaning: the difference between zero and one incident
 matters much more than the difference between nine and ten.
 
-`λ` and `μ` are **policy parameters**, set with the school and reported as configuration.
-λ = 0.25 places a single severity-4 incident at 0.63.
+`ν` and `μ` are **policy parameters**, set with the school and reported as configuration —
+`mu_tardiness` and `nu_early_departure` in `config.toml`. ν = 0.25 places four early
+departures at 0.63.
 
 ### Worked example
 
-Student X, after 20 school days: `P(absent)` = 0.42 from §4; 3 tardies; one confirmed
-severity-3 incident.
+Student X, after 20 school days: `P(absent)` = 0.42 from §4; 3 tardies; 2 early departures.
 
 ```
-T = 1 − exp(−0.2 × 3)  = 1 − 0.5488 = 0.4512
-S = 1 − exp(−0.25 × 3) = 1 − 0.4724 = 0.5276
+T = 1 − exp(−0.20 × 3) = 1 − 0.5488 = 0.4512
+E = 1 − exp(−0.25 × 2) = 1 − 0.6065 = 0.3935
 
-Risk = 0.1884 × 0.42  +  0.0810 × 0.4512  +  0.7306 × 0.5276
-     = 0.0791         +  0.0365           +  0.3855
-     = 0.501
+Risk = 0.1884 × 0.42  +  0.0810 × 0.4512  +  0.7306 × 0.3935
+     = 0.0791         +  0.0365           +  0.2875
+     = 0.4031
 ```
 
-→ **0.50, Monitor band.**
+→ **0.40, Monitor band.** `tests/test_risk.py` asserts these figures to four decimal
+places, so this example and the code cannot drift apart silently.
 
 ---
 
@@ -377,3 +400,34 @@ otherwise ask.
 8. **The risk score is not validated against outcomes.** Within 20 days you can show the model
    predicts next-day absence; you cannot show that intervening on high-risk students changed
    anything. Do not claim you can.
+
+---
+
+## 11. Where this lives
+
+| Piece | File |
+|---|---|
+| §2 linear regression, Durbin–Watson, daily rates | `trackify/analytics/trend.py` |
+| §4 pooled logistic model, §6 composite, §7 bands | `trackify/analytics/risk.py` |
+| §5 AHP weights and the consistency check | `trackify/analytics/ahp.py` |
+| Screening and incident counts (descriptive) | `trackify/analytics/screening.py` |
+| The workbook | `trackify/export/analytics.py` |
+| The button | `trackify/ui/records.py` — *Export analytics* |
+
+`mu_tardiness`, `nu_early_departure` and the band cutoffs are read from `config.toml`, never
+hardcoded.
+
+### What the export does when there is no data
+
+Every sheet is written regardless and states what is missing — *"a trend line needs at least
+3 school days with attendance recorded; the database has 1"*. A missing sheet reads as a
+crash and a zero reads as a finding, and on day one neither is true.
+
+Two fallbacks worth knowing, both labelled in the output rather than silent:
+
+- **No panel elicited yet** → the illustrative matrix from §5 is used and everything derived
+  from it is marked *PLACEHOLDER — must not be reported as a finding*.
+- **Too few absence events to fit** → `P(absent)` falls back to each student's observed
+  absence rate, and the Risk sheet says `observed rate (model not fitted)` in its own column.
+  An observed frequency describes the past; a model prediction forecasts the next day. They
+  must never be confused for one another.

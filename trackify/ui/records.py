@@ -42,6 +42,7 @@ from ..core import corrections, security
 from ..core.corrections import CorrectionError, CorrectionType
 from ..export import xlsx
 from . import icons
+from .roster import RosterPage
 
 MONTHS = ("January", "February", "March", "April", "May", "June", "July",
           "August", "September", "October", "November", "December")
@@ -433,10 +434,14 @@ class RecordsPage(QWidget):
     closed = Signal()
 
     def __init__(self, conn: sqlite3.Connection, *, school_name: str = "",
-                 parent=None) -> None:
+                 config=None, parent=None) -> None:
         super().__init__(parent)
         self.conn = conn
         self.school_name = school_name
+        # Only the analytics export needs it (risk band cutoffs and the saturation
+        # constants), so it stays optional rather than forcing every existing caller
+        # and test to build one.
+        self.config = config
         self.setObjectName("RecordsPage")
 
         root = QVBoxLayout(self)
@@ -460,7 +465,8 @@ class RecordsPage(QWidget):
 
         self.section = QComboBox()
         self.section.currentIndexChanged.connect(self.refresh)
-        bar.addWidget(QLabel("Section"))
+        self.section_label = QLabel("Section")
+        bar.addWidget(self.section_label)
         bar.addWidget(self.section)
 
         self.month = QComboBox()
@@ -478,16 +484,24 @@ class RecordsPage(QWidget):
         # Three weights, because "Export" and "Close" are not the same kind of action
         # and styling them identically makes the operator read every one of them.
         self.btn_log = self._button("Edit log", "unfinished", self._toggle_log)
+        self.btn_roster = self._button("Student roster", None, self._toggle_roster)
         self.btn_suspend = self._button("Class suspension", None, self._suspend)
         self.btn_password = self._button("Change password", None, self._change_password)
         self.btn_export = self._button("Export XLSX", None, self._export,
                                        kind="ToolbarPrimary")
+        self.btn_analytics = self._button("Export analytics", None, self._export_analytics)
         self.btn_close = self._button("Close", "back", self.closed.emit,
                                       kind="ToolbarQuiet")
-        for button in (self.btn_log, self.btn_suspend, self.btn_password,
-                       self.btn_export, self.btn_close):
+        for button in (self.btn_log, self.btn_roster, self.btn_suspend,
+                       self.btn_password, self.btn_analytics, self.btn_export,
+                       self.btn_close):
             bar.addWidget(button)
         root.addLayout(bar)
+        # The attendance controls are meaningless over a roster; the roster carries its
+        # own search and section filter. Held together so _show_view can hide them.
+        self._attendance_controls = (self.month, self.year, self.btn_suspend,
+                                     self.btn_export, self.btn_analytics, self.btn_log,
+                                     self.section, self.section_label)
 
         # --- legend --------------------------------------------------------
         # The glyphs explain themselves here rather than in a manual nobody opens.
@@ -532,6 +546,13 @@ class RecordsPage(QWidget):
         self.log.verticalHeader().setVisible(False)
         self.log.verticalHeader().setDefaultSectionSize(28)
         self.views.addWidget(self.log)
+
+        # Third view rather than a separate kiosk page: this way the roster inherits the
+        # password gate, the close handling, and the rule that any scan closes the staff
+        # area and returns to the gate. A separate page would re-implement all three.
+        self.roster = RosterPage(conn)
+        self.roster.changed.connect(self._roster_changed)
+        self.views.addWidget(self.roster)
         root.addWidget(self.views, 1)
 
         self.status = QLabel("")
@@ -677,27 +698,59 @@ class RecordsPage(QWidget):
 
     # -- actions --------------------------------------------------------------
 
-    def _toggle_log(self) -> None:
-        showing_log = self.views.currentIndex() == 1
-        if showing_log:
-            self.views.setCurrentIndex(0)
-            self.btn_log.setText("Edit log")
-            self.legend.show()
+    REGISTER, LOG, ROSTER = 0, 1, 2
+
+    def _show_view(self, index: int) -> None:
+        """Switch views, setting the WHOLE toolbar state every time.
+
+        Each toggle used to undo only its own changes, which meant going roster -> log
+        left the month and year pickers hidden and two different buttons both reading
+        "Back to register". Setting every affected widget on every switch costs nothing
+        and removes a whole class of that.
+        """
+        self.views.setCurrentIndex(index)
+        self.btn_log.setText("Back to register" if index == self.LOG else "Edit log")
+        self.btn_roster.setText(
+            "Back to register" if index == self.ROSTER else "Student roster")
+
+        # The month, year and section pickers belong to the register. Left visible over
+        # a roster they look like filters and do nothing.
+        for widget in self._attendance_controls:
+            widget.setVisible(index != self.ROSTER)
+        # Only the register uses the status glyphs.
+        self.legend.setVisible(index == self.REGISTER)
+
+        if index == self.REGISTER:
             self.title.setText("Attendance register")
             self.refresh()
-        else:
-            self._refresh_log()
-            self.views.setCurrentIndex(1)
-            self.btn_log.setText("Back to register")
-            self.legend.hide()          # nothing on the log view uses those glyphs
+        elif index == self.LOG:
             self.title.setText("Edit log")
+            self._refresh_log()
             self.status.setText(
                 "Every correction ever made to this section. Names are as typed and "
                 "are not verified by a login."
             )
+        else:
+            self.title.setText("Student roster")
+            self.subtitle.setText("")
+            self.roster.refresh()
+            self.status.setText("")
+
+    def _toggle_log(self) -> None:
+        self._show_view(self.REGISTER if self.views.currentIndex() == self.LOG
+                        else self.LOG)
+
+    def _toggle_roster(self) -> None:
+        self._show_view(self.REGISTER if self.views.currentIndex() == self.ROSTER
+                        else self.ROSTER)
+
+    def _roster_changed(self) -> None:
+        """A student was added, edited or deactivated -- the register's section list and
+        its rows may both be stale now."""
+        self._load_sections()
 
     def _correct_cell(self, row_index: int, column: int) -> None:
-        if self.views.currentIndex() != 0 or column >= len(self._days):
+        if self.views.currentIndex() != self.REGISTER or column >= len(self._days):
             return
         row = self._rows[row_index]
         day = self._days[column]
@@ -756,6 +809,38 @@ class RecordsPage(QWidget):
             QMessageBox.warning(self, "Export failed", str(exc))
             return
         self.status.setText(f"Exported to {written}")
+
+    def _export_analytics(self) -> None:
+        """The trend, risk, AHP and screening workbook.
+
+        Deliberately a separate file from the register: the register is the SF2-shaped
+        sheet staff already check, and burying it inside a report is how it stops being
+        checked. Whole-database scope, not the selected month -- a trend over one month
+        of a 20-day study would be most of the data thrown away.
+        """
+        from ..core.config import load_config
+        from ..export import analytics
+
+        config = self.config or load_config()
+        scope = self.section.currentText() or "all"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export analytics", analytics.default_filename(scope),
+            "Excel workbook (*.xlsx)",
+        )
+        if not path:
+            return
+        try:
+            written = analytics.export_analytics(
+                self.conn, config, path,
+                section_id=self.section_id, school_name=self.school_name,
+            )
+        except Exception as exc:            # noqa: BLE001 - a locked file is common
+            QMessageBox.warning(self, "Export failed", str(exc))
+            return
+        self.status.setText(
+            f"Analytics exported to {written}. Check the Summary sheet first -- it "
+            "lists every caveat in force."
+        )
 
     def _change_password(self) -> None:
         if ChangePasswordDialog(self.conn, self).exec() == QDialog.Accepted:

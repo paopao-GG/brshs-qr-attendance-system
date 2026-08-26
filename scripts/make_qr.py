@@ -36,7 +36,8 @@ def main() -> int:
 
     conn = db.connect()
     students = conn.execute(
-        """SELECT s.id, s.first_name, s.last_name, sec.name AS section, sec.grade_level
+        """SELECT s.id, s.lrn, s.first_name, s.last_name,
+                  sec.name AS section, sec.grade_level
            FROM students s JOIN sections sec ON sec.id = s.section_id
            WHERE s.active = 1 ORDER BY s.id"""
     ).fetchall()
@@ -44,12 +45,22 @@ def main() -> int:
         print("No students. Run: python scripts/seed_demo.py", file=sys.stderr)
         return 1
 
-    print(f"\n{'ID':>3}  {'PAYLOAD':<22} NAME")
-    print("-" * 60)
+    # The payload carries the LRN, matching qr-generator.exe exactly. Two generators
+    # that disagree about what goes in a code is the bug this replaced; a card printed
+    # here and one printed there must be the same string.
+    skipped = [r for r in students if not str(r["lrn"]).isdigit()]
+    students = [r for r in students if str(r["lrn"]).isdigit()]
+
+    print(f"\n{'LRN':<14} {'PAYLOAD':<26} NAME")
+    print("-" * 72)
     for row in students:
-        payload = encode(row["id"], config.secrets.qr_secret)
-        print(f"{row['id']:>3}  {payload:<22} {row['first_name']} {row['last_name']}")
-    print("-" * 60)
+        payload = encode(int(row["lrn"]), config.secrets.qr_secret)
+        print(f"{row['lrn']:<14} {payload:<26} {row['first_name']} {row['last_name']}")
+    print("-" * 72)
+
+    for row in skipped:
+        print(f"SKIPPED {row['first_name']} {row['last_name']}: "
+              f"LRN {row['lrn']!r} is not numeric and cannot be signed.", file=sys.stderr)
     print("\nType any payload into the kiosk and press Enter -- identical to a scan.")
     print("Printing for a webcam: make each code at least 25 mm wide, and use")
     print("matte lamination -- glare on a glossy card is the usual reason one")
@@ -82,7 +93,7 @@ def main() -> int:
             col, line = index % COLS, index // COLS
             x, y = col * CELL_W, line * CELL_H
 
-            payload = encode(row["id"], config.secrets.qr_secret)
+            payload = encode(int(row["lrn"]), config.secrets.qr_secret)
             qr = qrcode.QRCode(box_size=10, border=2,
                                error_correction=qrcode.constants.ERROR_CORRECT_M)
             qr.add_data(payload)

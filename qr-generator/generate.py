@@ -48,6 +48,9 @@ QR_BORDER = 4          # the spec quiet zone; below 4 the webcam decoder starts 
 MANIFEST_FIELDS = ["section", "name", "lrn", "lrn_digits", "payload", "filename"]
 SKIPPED_FIELDS = ["section", "name", "lrn", "cell", "reason"]
 CHANGES_FIELDS = ["change", "section", "name", "lrn", "filename", "detail"]
+EXCLUDED_FIELDS = ["section", "name", "cell", "reason"]
+
+EXCLUDED_REASON = "no LRN, no parent name and no phone -- treated as a blank entry"
 
 # Characters Windows forbids outright, plus the ASCII control range.
 _ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -64,6 +67,8 @@ class StudentRow:
     name: str
     lrn: str | None
     source: str          # "11-Initiative!B3" -- so a report row points at a cell
+    parent: str = ""     # column C, only ever tested for presence
+    phone: str = ""      # column D, likewise
 
 
 @dataclass(frozen=True)
@@ -85,6 +90,7 @@ class Changes:
     unchanged: list[Planned] = field(default_factory=list)
     removed: list[dict] = field(default_factory=list)        # gone from the roster
     skipped: list[StudentRow] = field(default_factory=list)  # no LRN, no code possible
+    excluded: list[StudentRow] = field(default_factory=list)  # blank rows, not students
     nonstandard: list[StudentRow] = field(default_factory=list)
     had_previous_run: bool = False
 
@@ -114,12 +120,14 @@ class Summary:
     repaired: int = 0
     removed: int = 0
     skipped: int = 0
+    excluded: int = 0
     nonstandard: int = 0
     total_codes: int = 0                # every code in the output folder afterwards
     per_section: dict[str, int] = field(default_factory=dict)
     manifest_path: Path | None = None
     skipped_path: Path | None = None
     changes_path: Path | None = None
+    excluded_path: Path | None = None
 
 
 def parse_lrn(value: object) -> str | None:
@@ -158,6 +166,30 @@ def parse_lrn(value: object) -> str | None:
     return str(number) if number > 0 else None
 
 
+def _blank(value: object) -> bool:
+    """True for None, "", and whitespace-only.
+
+    Whitespace matters here rather than being pedantry: one parent cell in the roster
+    holds a single space, and a plain truthiness test would read that as a parent on
+    file. Numeric cells arrive as floats (a phone comes back as 9.269996856e9), so
+    everything is stringified before the check.
+    """
+    return value is None or not str(value).strip()
+
+
+def is_excluded(row: StudentRow) -> bool:
+    """A row carrying nothing but a name is a blank entry, not a student.
+
+    No LRN, no parent and no phone means there is nothing to generate a code from and
+    nobody to chase for the missing number. Such rows are reported separately so the
+    "needs an LRN" list only holds students somebody can actually follow up.
+
+    Email is deliberately not consulted. It is not part of the rule, and the one row it
+    would rescue carries an address that belongs to the student on the line above.
+    """
+    return bool(not row.lrn and _blank(row.parent) and _blank(row.phone))
+
+
 def safe_filename(name: str) -> str:
     """Windows-safe stem for a student name.
 
@@ -186,8 +218,10 @@ def read_roster(xlsx_path: str | Path) -> list[StudentRow]:
     rows: list[StudentRow] = []
     try:
         for sheet in workbook.worksheets:
-            for index, (lrn_cell, name_cell) in enumerate(
-                sheet.iter_rows(min_col=1, max_col=2, values_only=True), start=1
+            # A=LRN, B=name, C=parent, D=phone. Column E (email) is deliberately not
+            # read: it takes no part in the exclusion rule and nothing else uses it.
+            for index, (lrn_cell, name_cell, parent_cell, phone_cell) in enumerate(
+                sheet.iter_rows(min_col=1, max_col=4, values_only=True), start=1
             ):
                 name = str(name_cell).strip() if name_cell is not None else ""
                 # Blank column B drops the MALE / FEMALE: banner rows for free,
@@ -201,6 +235,8 @@ def read_roster(xlsx_path: str | Path) -> list[StudentRow]:
                     name=name,
                     lrn=parse_lrn(lrn_cell),
                     source=f"{sheet.title}!B{index}",
+                    parent="" if parent_cell is None else str(parent_cell),
+                    phone="" if phone_cell is None else str(phone_cell),
                 ))
     finally:
         workbook.close()
@@ -238,6 +274,11 @@ def plan_changes(
     matched: set[int] = set()          # id() of previous rows we accounted for
 
     for row in rows:
+        # Order matters: an excluded row must never reach skipped, or the adviser is
+        # handed names nobody can act on.
+        if is_excluded(row):
+            changes.excluded.append(row)
+            continue
         if not row.lrn:
             changes.skipped.append(row)
             continue
@@ -308,11 +349,16 @@ def apply_changes(
         unchanged=len(changes.unchanged), moved=len(changes.moved),
         updated=len(changes.updated), new=len(changes.new),
         repaired=len(changes.repaired), removed=len(changes.removed),
-        skipped=len(changes.skipped), nonstandard=len(changes.nonstandard),
+        skipped=len(changes.skipped), excluded=len(changes.excluded),
+        nonstandard=len(changes.nonstandard),
     )
 
+    for row in changes.excluded:
+        progress(f"  EXCLUDE {row.section:<14} {row.name}  "
+                 f"(no LRN, parent or phone -- blank entry)")
     for row in changes.skipped:
-        progress(f"  SKIP    {row.section:<14} {row.name}  (no LRN)")
+        progress(f"  SKIP    {row.section:<14} {row.name}  "
+                 f"(no LRN, but has a parent or phone)")
     for row in changes.nonstandard:
         progress(f"  note    {row.section:<14} {row.name}  "
                  f"({len(row.lrn)}-digit LRN, used as typed)")
@@ -379,6 +425,10 @@ def apply_changes(
     } for r in changes.skipped])
     summary.changes_path = _write_csv(out_dir / "changes.csv", CHANGES_FIELDS,
                                       _change_rows(changes))
+    summary.excluded_path = _write_csv(out_dir / "excluded.csv", EXCLUDED_FIELDS, [{
+        "section": r.section, "name": r.name, "cell": r.source,
+        "reason": EXCLUDED_REASON,
+    } for r in changes.excluded])
     return summary
 
 

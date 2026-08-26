@@ -13,7 +13,7 @@ from trackify.core.corrections import CorrectionType
 from trackify.core.qrcodes import encode
 from trackify.core.service import ScanService
 
-from .conftest import at
+from .conftest import payload_for, at
 
 SECRET = "test-secret"
 DAY = "2026-09-01"
@@ -139,7 +139,7 @@ def test_a_scan_closes_the_records_page(qtbot, kiosk, conn, student, monkeypatch
     kiosk._open_records()
     assert kiosk.records_open
 
-    kiosk._submit(encode(student, SECRET))
+    kiosk._submit(payload_for(student))
     qtbot.wait(10)
 
     assert not kiosk.records_open
@@ -165,7 +165,7 @@ def test_the_records_button_is_only_on_the_waiting_screen(qtbot, kiosk, student)
     from trackify.ui.kiosk import KioskWindow  # noqa: F401
 
     assert kiosk.btn_records.isVisible()
-    kiosk._submit(encode(student, SECRET))
+    kiosk._submit(payload_for(student))
     qtbot.wait(10)
     assert not kiosk.btn_records.isVisible()      # hidden with the waiting block
 

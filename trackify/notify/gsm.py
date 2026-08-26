@@ -33,7 +33,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from .provider import NotificationProvider, SendResult
+from .provider import Availability, NotificationProvider, SendResult
 
 try:
     import serial
@@ -48,6 +48,20 @@ CH340_VID, CH340_PID = 0x1A86, 0x7523
 
 CTRL_Z = b"\x1a"
 ESC = b"\x1b"
+
+# A working SIM800C answers a bare AT in milliseconds. Two seconds is already generous,
+# and the difference matters: _read_until never returns early on silence, so without this
+# probe the init sequence spends init_timeout on each of ~13 commands -- over two minutes
+# against a port that is never going to answer.
+PROBE_TIMEOUT = 2.0
+
+# How often available() is allowed to touch the hardware while the module is missing.
+# The worker ticks every 4s; probing every tick would be pointless traffic.
+RECHECK_SECONDS = 15.0
+
+NO_PORT = ("No serial port found. Is the SIM800C plugged in? "
+           "Run: python scripts/test_sms.py --check")
+NO_PYSERIAL = "pyserial is not installed -- run: pip install pyserial"
 
 # +CREG <stat>. 1 and 5 are the only two that mean a message can leave.
 REGISTRATION = {
@@ -178,8 +192,6 @@ class GsmProvider(NotificationProvider):
         clear_storage: bool = True,
         serial_factory=None,
     ) -> None:
-        if serial is None and serial_factory is None:
-            raise GsmError("pyserial is not installed -- run: pip install pyserial")
         self.baud = baud
         self.send_timeout = send_timeout
         self.init_timeout = init_timeout
@@ -187,19 +199,35 @@ class GsmProvider(NotificationProvider):
         self._factory = serial_factory
         self._serial = None
         self._health: ModemHealth | None = None
+        self._last_check = 0.0
+        self._last_result: Availability | None = None
 
+        # Constructing this object must never fail because the hardware is absent. The
+        # kiosk builds its provider before window.show(), so a raise here means the
+        # operator gets no screen at all -- a missing module has to be a status they can
+        # see, not a traceback in a terminal nobody is looking at. Both conditions are
+        # re-checked in _open(), which is where they turn into GsmError.
+        self._missing = None
+        if serial is None and serial_factory is None:
+            self._missing = NO_PYSERIAL
+
+        # Deliberately not remembered as final: a module plugged in after startup is
+        # found the next time _open() runs.
         self.port = port or find_port()
-        if not self.port:
-            raise GsmError(
-                "No serial port found. Is the SIM800C plugged in? "
-                "Run: python scripts/test_sms.py --check"
-            )
 
     # -- port ---------------------------------------------------------------
 
     def _open(self):
         if self._serial is not None:
             return self._serial
+        if self._missing:
+            raise GsmError(self._missing)
+        if not self.port:
+            # Looked up again rather than trusted from __init__, so a module plugged in
+            # after the kiosk started is picked up without a restart.
+            self.port = find_port()
+        if not self.port:
+            raise GsmError(NO_PORT)
         if self._factory is not None:
             self._serial = self._factory()
         else:
@@ -224,6 +252,10 @@ class GsmProvider(NotificationProvider):
                 pass
             self._serial = None
             self._health = None
+            # A cached "available" would outlive the port it described -- close() is
+            # what a mid-send brownout calls, and that is exactly when the bar must
+            # stop claiming the module is fine.
+            self._last_result = None
 
     # -- AT plumbing --------------------------------------------------------
 
@@ -263,8 +295,32 @@ class GsmProvider(NotificationProvider):
 
     # -- initialisation -----------------------------------------------------
 
+    def _probe(self) -> None:
+        """Confirm something is actually answering before spending the init sequence.
+
+        On Windows find_port() falls back to the first COM port, which is usually a
+        Bluetooth virtual port rather than the module. Without this check that port gets
+        the full init sequence -- ~13 commands, each waiting out init_timeout in a
+        _read_until that never returns early on silence, so roughly two minutes of the
+        worker thread wedged on hardware that does not exist. A module that is there
+        answers this in milliseconds.
+        """
+        # Never longer than the init timeout it exists to protect: a caller that has
+        # already said "give up after n seconds" cannot mean "but wait longer than that
+        # for the first byte".
+        timeout = min(PROBE_TIMEOUT, self.init_timeout)
+        if "OK" not in self._command("AT", timeout):
+            port = self.port
+            self.close()
+            raise GsmError(
+                f"{port} did not answer AT within {timeout:.0f}s. It is a serial "
+                "port but probably not the module -- on Windows the first COM port is "
+                "usually Bluetooth. Run: python scripts/test_sms.py --check"
+            )
+
     def _initialise(self) -> None:
         """Bring the module to a known state. Every line here earns its place."""
+        self._probe()
         # Echo off FIRST. With echo on, every command comes back before its reply and
         # parsing becomes guesswork.
         self._command("ATE0", self.init_timeout)
@@ -330,6 +386,41 @@ class GsmProvider(NotificationProvider):
             self._health = self._read_health()
         return self._health
 
+    def available(self, *, now: float | None = None) -> Availability:
+        """Is the module there and answering? Cheap enough for a 4-second tick.
+
+        Three costs, in order: none at all once the port is open, none when there is no
+        port to try, and at most one 2-second probe per RECHECK_SECONDS otherwise. The
+        rate limit is what keeps a missing module from turning every tick into serial
+        traffic -- the answer cannot change faster than someone can plug a cable in.
+
+        This reports on the transport, not on the SIM. A module that is answering but
+        has no signal or no load is 'available' here and refused by health().blocker()
+        at send time, which is the check that can say exactly what is wrong.
+        """
+        if self._serial is not None:
+            return Availability(ok=True)
+        if self._missing:
+            return Availability(ok=False, reason=self._missing)
+
+        now = time.monotonic() if now is None else now
+        if (self._last_result is not None
+                and now - self._last_check < RECHECK_SECONDS):
+            return self._last_result
+
+        self._last_check = now
+        try:
+            # _open() re-resolves the port, probes, and turns every way this can fail
+            # into one GsmError carrying a sentence worth showing someone. Exception
+            # rather than GsmError because a status is never worth a crash: this runs
+            # on the worker thread with the whole queue behind it.
+            self._open()
+        except Exception as exc:
+            self._last_result = Availability(ok=False, reason=str(exc))
+        else:
+            self._last_result = Availability(ok=True)
+        return self._last_result
+
     # -- sending ------------------------------------------------------------
 
     def send(self, recipient: str, body: str) -> SendResult:
@@ -340,7 +431,15 @@ class GsmProvider(NotificationProvider):
 
         # Checked before the message is written, so a refusal here is unambiguous: the
         # body never left the module and retrying cannot duplicate anything.
-        blocker = self.health(refresh=True).blocker()
+        #
+        # Guarded because health() re-opens the port. Unplugged between passes, the
+        # GsmError would otherwise leave send(), escape queue.drain -- which does not
+        # wrap provider.send -- and abort the whole pass with the claimed row stranded
+        # in 'sending', recoverable only by a restart and then only as 'unknown'.
+        try:
+            blocker = self.health(refresh=True).blocker()
+        except GsmError as exc:
+            return SendResult(ok=False, error=str(exc))
         if blocker:
             return SendResult(ok=False, error=blocker)
 

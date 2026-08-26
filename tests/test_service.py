@@ -4,7 +4,7 @@ import pytest
 from trackify.core.qrcodes import encode
 from trackify.core.service import Presentation, ScanService
 
-from .conftest import at
+from .conftest import lrn_for, payload_for, at
 
 SECRET = "test-secret"
 
@@ -17,12 +17,8 @@ def service(conn, config):
     return ScanService(conn, cfg)
 
 
-def payload(student_id):
-    return encode(student_id, SECRET)
-
-
 def test_first_scan_presents_in(service, student):
-    p = service.handle_scan(payload(student), at=at(7, 0))
+    p = service.handle_scan(payload_for(student), at=at(7, 0))
     assert p.state is Presentation.IN
     assert p.headline == "IN"
     assert p.student_name == "Juan Dela Cruz"
@@ -32,35 +28,36 @@ def test_first_scan_presents_in(service, student):
 
 
 def test_second_scan_presents_out(service, student):
-    service.handle_scan(payload(student), at=at(7, 0))
-    p = service.handle_scan(payload(student), at=at(16, 0))
+    service.handle_scan(payload_for(student), at=at(7, 0))
+    p = service.handle_scan(payload_for(student), at=at(16, 0))
     assert p.state is Presentation.OUT
     assert p.headline == "OUT"
     assert p.detail == "Goodbye"
 
 
 def test_late_arrival_shown_in_detail(service, student):
-    p = service.handle_scan(payload(student), at=at(7, 45))
+    p = service.handle_scan(payload_for(student), at=at(7, 45))
     assert p.state is Presentation.IN
     assert p.detail == "Arrived late"
 
 
 def test_early_departure_shown_in_detail(service, student):
-    service.handle_scan(payload(student), at=at(7, 0))
-    p = service.handle_scan(payload(student), at=at(12, 0))
+    service.handle_scan(payload_for(student), at=at(7, 0))
+    p = service.handle_scan(payload_for(student), at=at(12, 0))
     assert p.detail == "Early departure"
 
 
 def test_rescan_presents_already(service, student):
-    service.handle_scan(payload(student), at=at(7, 0))
-    p = service.handle_scan(payload(student), at=at(7, 1))
+    service.handle_scan(payload_for(student), at=at(7, 0))
+    p = service.handle_scan(payload_for(student), at=at(7, 1))
     assert p.state is Presentation.ALREADY
     assert "7:00 AM" in p.detail
     assert p.student_name == "Juan Dela Cruz"
 
 
 def test_forged_code_presents_unknown(service, student):
-    forged = payload(student).replace(f"-{student}-", f"-{student + 99}-")
+    lrn = lrn_for(student)
+    forged = payload_for(student).replace(f"-{lrn}-", f"-{int(lrn) + 99}-")
     p = service.handle_scan(forged, at=at(7, 0))
     assert p.state is Presentation.UNKNOWN_CODE
     assert p.hold_ms >= 5000, "error states must hold long enough to read"
@@ -81,28 +78,28 @@ def test_valid_shape_unknown_student(service):
 
 def test_inactive_student_rejected(service, conn, student):
     conn.execute("UPDATE students SET active = 0 WHERE id = ?", (student,))
-    p = service.handle_scan(payload(student), at=at(7, 0))
+    p = service.handle_scan(payload_for(student), at=at(7, 0))
     assert p.state is Presentation.UNKNOWN_CODE
 
 
 def test_third_scan_needs_override(service, student):
-    service.handle_scan(payload(student), at=at(7, 0))
-    service.handle_scan(payload(student), at=at(16, 0))
-    p = service.handle_scan(payload(student), at=at(16, 30))
+    service.handle_scan(payload_for(student), at=at(7, 0))
+    service.handle_scan(payload_for(student), at=at(16, 0))
+    p = service.handle_scan(payload_for(student), at=at(16, 30))
     assert p.state is Presentation.NEEDS_OVERRIDE
 
 
 def test_suspended_day(service, conn, config, student):
     from trackify.core.sessions import suspend_day
     suspend_day(conn, "2026-09-01", "Typhoon signal no. 2", config)
-    p = service.handle_scan(payload(student), at=at(7, 0))
+    p = service.handle_scan(payload_for(student), at=at(7, 0))
     assert p.state is Presentation.NO_CLASSES
     assert "Typhoon" in p.detail
 
 
 def test_scan_is_atomic(service, conn, student):
     """One transaction: the scan row and its notification commit together."""
-    service.handle_scan(payload(student), at=at(7, 0))
+    service.handle_scan(payload_for(student), at=at(7, 0))
     scans = conn.execute("SELECT COUNT(*) FROM scan_events").fetchone()[0]
     notifs = conn.execute("SELECT COUNT(*) FROM notifications").fetchone()[0]
     assert scans == 1 and notifs == 1
@@ -110,7 +107,7 @@ def test_scan_is_atomic(service, conn, student):
 
 def test_student_without_guardian_still_scans(service, conn, make_student):
     sid = make_student(guardian_mobile=None, first="Beatriz", last="Cortez")
-    p = service.handle_scan(payload(sid), at=at(7, 0))
+    p = service.handle_scan(payload_for(sid), at=at(7, 0))
     assert p.state is Presentation.IN
     assert p.notifications_queued == 0, "attendance recorded, nobody notified"
 
@@ -125,14 +122,14 @@ def test_adviser_is_shown_for_identity_confirmation(service, conn, section, stud
     adviser_id = conn.execute("SELECT id FROM users").fetchone()[0]
     conn.execute("UPDATE sections SET adviser_id = ? WHERE id = ?", (adviser_id, section))
 
-    p = service.handle_scan(payload(student), at=at(7, 0))
+    p = service.handle_scan(payload_for(student), at=at(7, 0))
     assert p.adviser == "Adviser: Tricia San Jose"
 
 
 def test_section_with_no_adviser_still_scans(service, student):
     """A LEFT JOIN, not an inner one: a section between advisers must not close the
     gate on the students in it."""
-    p = service.handle_scan(payload(student), at=at(7, 0))
+    p = service.handle_scan(payload_for(student), at=at(7, 0))
     assert p.state is Presentation.IN
     assert p.adviser == ""
 
@@ -163,7 +160,7 @@ def test_close_day_is_idempotent(service, conn, make_student):
 def test_close_day_does_not_text_about_a_missing_out_scan(service, conn, student):
     """The rule that must not regress: 'no departure recorded for your child' reads
     as a missing-child alert."""
-    service.handle_scan(payload(student), at=at(7, 0))
+    service.handle_scan(payload_for(student), at=at(7, 0))
     conn.execute("DELETE FROM notifications")
 
     result = service.close_day("2026-09-01", at=at(16, 30))
@@ -198,13 +195,13 @@ def test_closing_a_past_day_dates_the_text_to_that_day(service, conn, student):
 # --- screening (docs/prohibited-items.md) -----------------------------------
 
 def _scan_id(service, student):
-    p = service.handle_scan(payload(student), at=at(7, 0))
+    p = service.handle_scan(payload_for(student), at=at(7, 0))
     return p.scan_id
 
 
 def test_the_presentation_carries_the_arming_scan(service, student):
     """A screening binds to a scan and to nothing else -- the UI needs the id."""
-    p = service.handle_scan(payload(student), at=at(7, 0))
+    p = service.handle_scan(payload_for(student), at=at(7, 0))
     assert p.scan_id is not None
     assert p.student_id == student
 
@@ -270,7 +267,7 @@ def test_unresolved_screenings_surface_for_the_guard(service, conn, student, mak
 
     other = make_student(first="Ana", last="Reyes")
     service.record_screening(_scan_id(service, student), Outcome.CLEAR)
-    p = service.handle_scan(payload(other), at=at(7, 5))
+    p = service.handle_scan(payload_for(other), at=at(7, 5))
     service.record_screening(p.scan_id, Outcome.PENDING_VERIFICATION)
 
     unresolved = service.unresolved_screenings("2026-09-01")
@@ -284,7 +281,7 @@ def test_coverage_counts_scans_nobody_answered_for(service, student, make_studen
 
     other = make_student(first="Ana", last="Reyes")
     service.record_screening(_scan_id(service, student), Outcome.CLEAR)
-    service.handle_scan(payload(other), at=at(7, 5))          # never answered
+    service.handle_scan(payload_for(other), at=at(7, 5))          # never answered
 
     coverage = service.screening_coverage("2026-09-01")
     assert coverage["clear"] == 1
@@ -308,7 +305,7 @@ def test_screening_never_touches_attendance(service, conn, student):
 
 def _screened(service, student, outcome=None):
     from trackify.core.screening import Outcome
-    p = service.handle_scan(payload(student), at=at(7, 0))
+    p = service.handle_scan(payload_for(student), at=at(7, 0))
     sid = service.record_screening(p.scan_id, outcome or Outcome.PROHIBITED,
                                    metal_detected=True)
     return sid, p.student_id
@@ -369,7 +366,7 @@ def test_two_incidents_in_one_day_both_notify(service, conn, student):
     service.record_incident(first_sid, sid_student, "bladed", "knife")
 
     # A second scan the same day, past the debounce window, with its own screening.
-    p2 = service.handle_scan(payload(student), at=at(13, 0))
+    p2 = service.handle_scan(payload_for(student), at=at(13, 0))
     second_sid = service.record_screening(p2.scan_id, Outcome.PROHIBITED,
                                           metal_detected=True)
     service.record_incident(second_sid, sid_student, "blunt", "metal bar")
@@ -401,3 +398,75 @@ def test_incident_cannot_exist_without_a_screening(service, conn, student):
     import sqlite3
     with pytest.raises(sqlite3.IntegrityError):
         service.record_incident(99999, student, "bladed", "knife")
+
+
+# --- what a printed card is keyed on -----------------------------------------
+#
+# qr-generator.exe signs the LRN (qr-generator/generate.py). The kiosk used to look the
+# decoded number up as students.id, so a real card reached the gate with a valid
+# signature and was refused. These pin the resolution down in both directions.
+
+def test_a_card_scans_by_lrn_not_by_row_id(service, conn, student):
+    """The fix, stated directly: the number on the card is the LRN."""
+    lrn = conn.execute("SELECT lrn FROM students WHERE id = ?", (student,)).fetchone()[0]
+
+    p = service.handle_scan(encode(int(lrn), SECRET), at=at(7, 0))
+
+    assert p.state is Presentation.IN
+    assert p.student_name == "Juan Dela Cruz"
+
+
+def test_a_payload_carrying_the_row_id_is_refused(service, student):
+    """The old scheme has to be genuinely dead, not merely unused. A half-migration --
+    both schemes accepted -- would let one student's row id collide with another
+    student's LRN and silently mark the wrong child present."""
+    p = service.handle_scan(encode(student, SECRET), at=at(7, 0))
+
+    assert p.state is Presentation.UNKNOWN_CODE
+
+
+def test_the_scan_is_recorded_against_the_row_id_not_the_lrn(service, conn, student):
+    """Every table downstream is a foreign key to students(id). Writing the LRN there
+    would either break the constraint or land on an unrelated row."""
+    service.handle_scan(payload_for(student), at=at(7, 0))
+
+    recorded = conn.execute("SELECT student_id FROM scan_events").fetchall()
+    assert [r[0] for r in recorded] == [student]
+
+
+def test_a_card_survives_a_reseed(service, conn, section, student):
+    """The operational promise. A printed card is a physical object that outlives any
+    particular database; before this, seed_demo.py --reset renumbered every student and
+    silently invalidated every card already handed out."""
+    lrn = conn.execute("SELECT lrn FROM students WHERE id = ?", (student,)).fetchone()[0]
+    card = encode(int(lrn), SECRET)
+
+    # Rebuild the roster. The same learner comes back with a different row id.
+    conn.execute("DELETE FROM students WHERE id = ?", (student,))
+    conn.execute("INSERT INTO students (id, lrn, first_name, last_name, section_id, "
+                 "guardian_name, consent_on_file, created_at) "
+                 "VALUES (500, ?, 'Juan', 'Dela Cruz', ?, 'Maria', 1, '2026-01-01')",
+                 (lrn, section))
+
+    p = service.handle_scan(card, at=at(7, 0))
+
+    assert p.state is Presentation.IN, "the card stopped working across a reseed"
+    assert conn.execute("SELECT student_id FROM scan_events").fetchone()[0] == 500
+
+
+def test_an_unknown_lrn_is_refused_rather_than_matched_to_a_neighbour(service, student):
+    """SQLite applies the column's TEXT affinity to a numeric operand, so this compares
+    as text. If that ever changed, a near-miss LRN must still fail closed."""
+    p = service.handle_scan(encode(999999999999, SECRET), at=at(7, 0))
+
+    assert p.state is Presentation.UNKNOWN_CODE
+    assert p.headline == "Student not found"
+
+
+def test_an_inactive_students_card_stops_working(service, conn, student):
+    """A learner who left the school keeps their LRN forever; the card must not."""
+    conn.execute("UPDATE students SET active = 0 WHERE id = ?", (student,))
+
+    p = service.handle_scan(payload_for(student), at=at(7, 0))
+
+    assert p.state is Presentation.UNKNOWN_CODE

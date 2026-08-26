@@ -189,10 +189,25 @@ over USB serial — the reasoning, and the trade-offs accepted, are recorded in
   until then. Without that, the worker's four-second poll would spend the entire retry
   allowance inside twenty seconds and permanently fail a message that a minute's patience
   would have delivered.
+- **The module can simply be absent, and that is not a failed message.** A cable that is not
+  plugged in, or a serial port that is not the module, means nothing was attempted. The
+  station never starts a drain in that state: rows stay `pending` with their retry budget
+  untouched, and go out on the first pass after the module answers. Draining into an absent
+  module instead would run every queued notification through the backoff ladder, which
+  reaches the retry limit in under two hours — the morning's notifications would be
+  permanently `failed` by mid-morning, and plugging the module in at noon would send nothing.
 
 The queue still contains the same risk it always did: an outage **delays** notifications, it
 never silently loses them. The station shows a persistent **unsent count** so a sustained
 failure is visible the same morning rather than discovered in the data afterwards.
+
+**The station always starts.** The notification module is checked at the point of use, never
+as a precondition for opening the scan station — a school morning cannot depend on a USB
+cable. When the module is missing or not answering, the status bar reads `SMS: gsm
+unavailable` in amber with the reason on hover, alongside the same treatment a dead camera
+gets. The alternative failed badly in both directions: a hard error meant no screen at all,
+and on a machine with any serial port present (on Windows, usually Bluetooth) the module was
+assumed healthy while every send timed out silently.
 
 ### 4.2 Attendance correction
 
@@ -291,8 +306,14 @@ above needs to exist.
 `guardian_mobile` · `photo_path` · `consent_on_file` · `notify_optin` · `active`
 
 > The QR payload is **not stored.** It is derived as a pure function of
-> `(student_id, secret)`, so there is nothing to drift out of sync and nothing to leak from
+> `(lrn, secret)`, so there is nothing to drift out of sync and nothing to leak from
 > the database. `sections` carries `adviser_id`.
+>
+> It is keyed on the **LRN, not `id`.** A printed card is a physical object that outlives
+> any particular database, and the LRN follows the learner for life; keyed on the
+> autoincrement `id`, a reseed would renumber every student and silently invalidate every
+> card already handed out. The scan path resolves LRN → row and then uses that row's own
+> `id` for every write, because all the foreign keys below point at `students(id)`.
 
 ### `scan_events` — what the sensor saw
 

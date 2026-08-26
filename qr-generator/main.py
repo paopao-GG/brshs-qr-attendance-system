@@ -48,6 +48,7 @@ class App(tk.Tk):
 
         self._messages: queue.Queue[str | tuple] = queue.Queue()
         self._running = False
+        self._done = 0
 
         self._build_ui()
         self.secret.trace_add("write", lambda *_: self._refresh_button())
@@ -219,6 +220,7 @@ class App(tk.Tk):
                 self.status.set("Cancelled.")
                 return
 
+        self._done = 0
         self.progress.configure(
             maximum=max(len(changes.to_write) + len(changes.moved), 1), value=0)
         self.status.set("Writing...")
@@ -232,9 +234,13 @@ class App(tk.Tk):
                 if isinstance(message, str):
                     self._write(message)
                     # Advance only on lines that mean a file was touched, so the bar
-                    # tracks real work rather than every note and skip.
+                    # tracks real work rather than every note and skip. The value is
+                    # set rather than stepped: ttk's step() wraps back to zero once it
+                    # passes maximum, so a run that finishes exactly on the total would
+                    # leave the bar looking empty.
                     if message.lstrip().split(" ")[0] in _WROTE_LABELS:
-                        self.progress.step()
+                        self._done += 1
+                        self.progress.configure(value=self._done)
                 elif message[0] == "plan":
                     self._review(message[1], message[2])
                 elif message[0] == "done":
@@ -252,6 +258,7 @@ class App(tk.Tk):
     def _finish(self, summary, out_dir: Path) -> None:
         self._running = False
         self._refresh_button()
+        self.progress.configure(value=self.progress["maximum"])
 
         self._write("")
         self._write("-" * 60)
@@ -264,7 +271,10 @@ class App(tk.Tk):
                     f"repaired {summary.repaired})")
         self._write(f"  Renamed           : {summary.moved}   (same code, no reprint)")
         self._write(f"  Unchanged         : {summary.unchanged}   (no reprint)")
-        self._write(f"  Skipped           : {summary.skipped}   (no LRN)")
+        self._write(f"  Skipped           : {summary.skipped}   "
+                    f"(no LRN, but has a parent or phone)")
+        self._write(f"  Excluded          : {summary.excluded}   "
+                    f"(blank entries -- no LRN, parent or phone)")
         if summary.removed:
             self._write(f"  Removed           : {summary.removed}   "
                         f"(off the roster; files left in place)")
@@ -276,6 +286,7 @@ class App(tk.Tk):
         self._write(f"  Manifest  : {summary.manifest_path.name}")
         self._write(f"  Changes   : {summary.changes_path.name}")
         self._write(f"  Report    : {summary.skipped_path.name}")
+        self._write(f"  Excluded  : {summary.excluded_path.name}")
         self._write("")
         self._write("Print each code at least 25 mm wide. Matte, not glossy -- glare on")
         self._write("a laminated card is the usual reason a code will not scan.")
@@ -289,7 +300,8 @@ class App(tk.Tk):
             f"{summary.written} code(s) written to:\n{out_dir}\n\n"
             f"{summary.total_codes} student(s) now have a code.\n"
             f"{summary.updated} card(s) must be REPRINTED (see changes.csv).\n"
-            f"{summary.skipped} student(s) have no LRN (see skipped.csv).",
+            f"{summary.skipped} student(s) have no LRN (see skipped.csv).\n"
+            f"{summary.excluded} blank entr(ies) were excluded (see excluded.csv).",
         )
 
 
@@ -379,7 +391,10 @@ def run_cli(argv: list[str]) -> int:
          f"repaired {summary.repaired})")
     emit(f"  Renamed           : {summary.moved}   (same code, no reprint)")
     emit(f"  Unchanged         : {summary.unchanged}   (no reprint)")
-    emit(f"  Skipped           : {summary.skipped}   (no LRN)")
+    emit(f"  Skipped           : {summary.skipped}   "
+         f"(no LRN, but has a parent or phone)")
+    emit(f"  Excluded          : {summary.excluded}   "
+         f"(blank entries -- no LRN, parent or phone)")
     if summary.removed:
         emit(f"  Removed           : {summary.removed}   "
              f"(off the roster; files left in place)")

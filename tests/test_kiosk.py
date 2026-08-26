@@ -14,11 +14,14 @@ from trackify.core.qrcodes import encode
 from trackify.core.service import ScanService
 from trackify.ui.worker import QueueStats
 
+from .conftest import lrn_for, payload_for
+
 SECRET = "test-secret"
 
 
 @pytest.fixture
 def kiosk(qtbot, conn, config, student):
+
     from trackify.ui.kiosk import KioskWindow
 
     cfg = dataclasses.replace(
@@ -56,7 +59,7 @@ def test_starts_in_waiting_state(kiosk):
 
 
 def test_scan_shows_student_and_in(qtbot, kiosk, student):
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
 
     assert kiosk.stage.property("state") == "in"
     assert kiosk.headline.text() == "IN"
@@ -67,30 +70,33 @@ def test_scan_shows_student_and_in(qtbot, kiosk, student):
 
 
 def test_second_scan_shows_out(qtbot, kiosk, student, conn):
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     # Move the first scan outside the debounce window. Must stay on the SAME date:
     # scan_events.date is today's, so a different date would orphan the lookup.
     from datetime import datetime, timedelta
     conn.execute("UPDATE scan_events SET scanned_at = ?",
                  ((datetime.now() - timedelta(hours=2)).isoformat(timespec="seconds"),))
     answer(qtbot, kiosk)
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
 
     assert kiosk.stage.property("state") == "out"
     assert kiosk.headline.text() == "OUT"
 
 
 def test_rapid_rescan_shows_already(qtbot, kiosk, student):
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     answer(qtbot, kiosk)
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
 
     assert kiosk.stage.property("state") == "already"
     assert "Already recorded" in kiosk.headline.text()
 
 
 def test_forged_code_shows_red_unknown(qtbot, kiosk, student):
-    forged = encode(student, SECRET).replace(f"-{student}-", f"-{student + 77}-")
+    """Editing the digits in a card is the proxy-attendance attack the signature
+    exists to stop -- the LRN changes, the HMAC no longer covers it."""
+    lrn = lrn_for(student)
+    forged = payload_for(student).replace(f"-{lrn}-", f"-{int(lrn) + 77}-")
     scan(qtbot, kiosk, forged)
 
     assert kiosk.stage.property("state") == "unknown"
@@ -110,7 +116,7 @@ def test_empty_input_ignored(qtbot, kiosk):
 
 def test_input_rate_limit_engages(qtbot, kiosk, student):
     """A stuck scanner must not flood the queue."""
-    payload = encode(student, SECRET)
+    payload = payload_for(student)
     for _ in range(30):
         kiosk.scan_input.setText(payload)
         kiosk.scan_input.returnPressed.emit()
@@ -119,7 +125,7 @@ def test_input_rate_limit_engages(qtbot, kiosk, student):
 
 
 def test_screen_returns_to_waiting(qtbot, kiosk, student):
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     assert kiosk.result.isVisible()
     kiosk._reset_timer.stop()
     kiosk._show_waiting()
@@ -129,7 +135,7 @@ def test_screen_returns_to_waiting(qtbot, kiosk, student):
 
 def test_input_stays_focused_after_scan(qtbot, kiosk, student):
     """A dead input means the next student cannot scan."""
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     kiosk._show_waiting()
     assert kiosk.focusWidget() is kiosk.scan_input
 
@@ -149,6 +155,49 @@ def test_breaker_alarm_shows_halted(kiosk):
     assert "HALTED" in kiosk.status_provider.text()
 
 
+def test_halted_survives_the_next_stats_tick(kiosk):
+    """The breaker fires once and the next stats update lands four seconds later.
+    Overwriting it made the alarm invisible in practice, which is the opposite of what
+    a spend cap is for."""
+    kiosk.on_alarm("Daily SMS cap of 1000 reached")
+    kiosk.on_stats(QueueStats(unsent=3, provider="gsm"))
+
+    assert "HALTED" in kiosk.status_provider.text()
+    assert kiosk.status_provider.property("alert") == "true"
+
+
+def test_a_missing_module_is_named_in_the_status_bar(kiosk):
+    """Otherwise the bar reads a confident "SMS: gsm" all day while the queue waits for
+    hardware nobody has noticed is unplugged."""
+    kiosk.on_stats(QueueStats(
+        unsent=2, provider="gsm", provider_available=False,
+        provider_detail="No serial port found. Is the SIM800C plugged in?",
+    ))
+
+    assert "unavailable" in kiosk.status_provider.text()
+    assert "gsm" in kiosk.status_provider.text()
+    assert kiosk.status_provider.property("alert") == "true",         "a module that cannot send must be visibly flagged, not quietly noted"
+    assert "plugged in" in kiosk.status_provider.toolTip(),         "the reason is what tells the operator which cable to look at"
+
+
+def test_the_indicator_clears_when_the_module_comes_back(kiosk):
+    kiosk.on_stats(QueueStats(provider="gsm", provider_available=False,
+                              provider_detail="not answering"))
+    kiosk.on_stats(QueueStats(provider="gsm"))
+
+    assert kiosk.status_provider.text() == "SMS: gsm"
+    assert kiosk.status_provider.property("alert") == "false"
+    assert kiosk.status_provider.toolTip() == ""
+
+
+def test_a_healthy_provider_is_not_flagged(kiosk):
+    """console and null are always available; nothing about them should turn amber."""
+    kiosk.on_stats(QueueStats(unsent=0, provider="console"))
+
+    assert kiosk.status_provider.text() == "SMS: console"
+    assert kiosk.status_provider.property("alert") == "false"
+
+
 # --- student photo (flow.md 3 step 5) ---------------------------------------
 
 def _write_photo(path, size=(240, 320)):
@@ -162,7 +211,7 @@ def test_photo_fills_the_avatar_when_one_exists(qtbot, kiosk, conn, student, tmp
     photo = _write_photo(tmp_path / "12.jpg")
     conn.execute("UPDATE students SET photo_path = ? WHERE id = ?", (str(photo), student))
 
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
 
     assert not kiosk.avatar.pixmap().isNull()
     assert kiosk.avatar.text() == ""
@@ -176,7 +225,7 @@ def test_unreadable_photo_falls_back_to_initials(qtbot, kiosk, conn, student, tm
     broken.write_text("this is not a JPEG")
     conn.execute("UPDATE students SET photo_path = ? WHERE id = ?", (str(broken), student))
 
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
 
     assert kiosk.avatar.text() == "JD"
     assert kiosk.avatar.pixmap().isNull()
@@ -185,7 +234,7 @@ def test_unreadable_photo_falls_back_to_initials(qtbot, kiosk, conn, student, tm
 def test_missing_photo_file_falls_back_to_initials(qtbot, kiosk, conn, student):
     conn.execute("UPDATE students SET photo_path = 'data/photos/nope.jpg' WHERE id = ?",
                  (student,))
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     assert kiosk.avatar.text() == "JD"
 
 
@@ -198,11 +247,11 @@ def test_a_photo_does_not_linger_onto_the_next_student(
     conn.execute("UPDATE students SET photo_path = ? WHERE id = ?", (str(photo), student))
     other = make_student(first="Ana", last="Reyes")
 
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     assert not kiosk.avatar.pixmap().isNull()
 
     answer(qtbot, kiosk)
-    scan(qtbot, kiosk, encode(other, SECRET))
+    scan(qtbot, kiosk, payload_for(other))
     assert kiosk.avatar.pixmap().isNull()
     assert kiosk.avatar.text() == "AR"
 
@@ -227,7 +276,12 @@ def test_day_is_closed_once_past_dismissal(qtbot, kiosk, conn, make_student):
 def test_day_is_not_closed_before_dismissal(qtbot, kiosk, conn):
     from datetime import datetime, time
 
+    # KioskWindow.__init__ runs _tick_clock() once, which closes the day for real when
+    # the suite happens to run after dismissal. Without this the test passes all morning
+    # and fails every evening, which looks exactly like a regression and is not one.
+    conn.execute("DELETE FROM attendance_days")
     kiosk._closed_for = None
+
     kiosk._maybe_close_day(datetime.combine(datetime.now().date(), time(9, 0)))
 
     assert conn.execute("SELECT COUNT(*) FROM attendance_days").fetchone()[0] == 0
@@ -271,7 +325,7 @@ def test_photo_is_masked_to_a_circle(qtbot, kiosk, conn, student, tmp_path):
     photo = _write_photo(tmp_path / "square.jpg", size=(400, 400))
     conn.execute("UPDATE students SET photo_path = ? WHERE id = ?", (str(photo), student))
 
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
 
     image = kiosk.avatar.pixmap().toImage()
     assert image.pixelColor(2, 2).alpha() == 0                    # corner clipped away
@@ -294,7 +348,7 @@ def _screening_buttons(kiosk):
 def test_an_arrival_asks_the_metal_question_on_the_result_screen(qtbot, kiosk, student):
     """The fast path stays on the result screen: no page change for the ~95% of
     students who have nothing in their bag."""
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
 
     assert kiosk.screening_row.isVisible()
     assert kiosk.result.isVisible()
@@ -304,7 +358,7 @@ def test_an_arrival_asks_the_metal_question_on_the_result_screen(qtbot, kiosk, s
 
 
 def test_no_metal_records_clear(qtbot, kiosk, conn, student):
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     kiosk.btn_no_metal.click()
     qtbot.wait(10)
 
@@ -316,7 +370,7 @@ def test_no_metal_records_clear(qtbot, kiosk, conn, student):
 
 
 def test_metal_detected_opens_the_inspection_page(qtbot, kiosk, conn, student):
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     kiosk.btn_metal.click()
     qtbot.wait(10)
 
@@ -331,7 +385,7 @@ def test_the_student_is_identified_on_the_inspection_page(qtbot, kiosk, student)
     """The reason this used to live inside the result block. Putting one student's
     knife on another student's record is the worst mistake available here, and a
     separate page is exactly how that happens."""
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     kiosk.btn_metal.click()
     qtbot.wait(10)
 
@@ -345,7 +399,7 @@ def test_the_decision_rule_is_on_the_inspection_page(qtbot, kiosk, student):
     one step too late for the rule to help choose it."""
     from trackify.core import screening as scr
 
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     kiosk.btn_metal.click()
     qtbot.wait(10)
 
@@ -356,7 +410,7 @@ def test_the_decision_rule_is_on_the_inspection_page(qtbot, kiosk, student):
 
 def test_every_card_carries_an_icon(qtbot, kiosk, student):
     """A blank card is what a missing font or a malformed path looks like."""
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     kiosk.btn_metal.click()
     qtbot.wait(10)
 
@@ -368,7 +422,7 @@ def test_every_card_carries_an_icon(qtbot, kiosk, student):
 def test_back_returns_to_the_result_page_having_recorded_nothing(
     qtbot, kiosk, conn, student
 ):
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     kiosk.btn_metal.click()
     kiosk.btn_back.click()
     qtbot.wait(10)
@@ -385,11 +439,11 @@ def test_a_refused_scan_is_visible_during_an_inspection(
     """The refusal used to be written only to the result page's label, which is
     hidden here -- so the operator would see nothing and think the scanner had died."""
     other = make_student(first="Ana", last="Reyes")
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     kiosk.btn_metal.click()
     qtbot.wait(10)
 
-    scan(qtbot, kiosk, encode(other, SECRET))
+    scan(qtbot, kiosk, payload_for(other))
 
     assert kiosk.inspect_prompt.isVisible()
     assert "Juan Dela Cruz" in kiosk.inspect_prompt.text()
@@ -399,7 +453,7 @@ def test_a_refused_scan_is_visible_during_an_inspection(
 
 def test_common_items_records_metal_but_no_finding(qtbot, kiosk, conn, student):
     """The distinction that measures whether the declaration tray is working."""
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     kiosk.btn_metal.click()
     kiosk.btn_common.click()
     qtbot.wait(10)
@@ -413,7 +467,7 @@ def test_common_items_records_metal_but_no_finding(qtbot, kiosk, conn, student):
 def test_the_screen_never_closes_on_its_own(qtbot, kiosk, conn, student):
     """The whole point of removing the timeout: the guard may still be holding the
     bag open. A screen that closed itself would record an outcome nobody chose."""
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
 
     assert not kiosk._reset_timer.isActive()
 
@@ -433,10 +487,10 @@ def test_a_scan_is_refused_while_a_screening_is_pending(
     qtbot, kiosk, conn, student, make_student
 ):
     other = make_student(first="Ana", last="Reyes")
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     scans_before = conn.execute("SELECT COUNT(*) FROM scan_events").fetchone()[0]
 
-    scan(qtbot, kiosk, encode(other, SECRET))
+    scan(qtbot, kiosk, payload_for(other))
 
     assert conn.execute(
         "SELECT COUNT(*) FROM scan_events").fetchone()[0] == scans_before
@@ -454,12 +508,12 @@ def test_the_refused_student_can_scan_again_once_answered(
     """A refusal writes nothing, so the retry is a first scan -- not caught by the
     debounce window, and recorded as a normal arrival."""
     other = make_student(first="Ana", last="Reyes")
-    scan(qtbot, kiosk, encode(student, SECRET))
-    scan(qtbot, kiosk, encode(other, SECRET))          # refused
+    scan(qtbot, kiosk, payload_for(student))
+    scan(qtbot, kiosk, payload_for(other))          # refused
 
     kiosk.btn_no_metal.click()
     qtbot.wait(10)
-    scan(qtbot, kiosk, encode(other, SECRET))          # retry
+    scan(qtbot, kiosk, payload_for(other))          # retry
 
     assert kiosk.headline.text() == "IN"
     assert kiosk.name_label.text() == "Ana Reyes"
@@ -470,7 +524,7 @@ def test_not_screened_stays_reachable_by_hand(qtbot, kiosk, conn, student):
     """With no timeout and no supersede, this button is the only honest way out of a
     student who genuinely cannot be screened -- a flat detector, an emergency. Without
     it the operator's only exits are a fabricated clear or a frozen gate."""
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     kiosk.btn_not_screened.click()
     qtbot.wait(10)
 
@@ -483,7 +537,7 @@ def test_no_button_can_steal_the_scanner_enter(qtbot, kiosk, student):
     with Enter. One focusable button and scanning silently stops working."""
     from qtpy.QtCore import Qt
 
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     kiosk.btn_metal.click()
     qtbot.wait(10)
 
@@ -492,7 +546,7 @@ def test_no_button_can_steal_the_scanner_enter(qtbot, kiosk, student):
 
 
 def test_the_scanner_input_keeps_focus_on_the_inspection_page(qtbot, kiosk, student):
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     kiosk.btn_metal.click()
     qtbot.wait(10)
     assert kiosk.scan_input.hasFocus()
@@ -507,20 +561,20 @@ def test_the_tool_category_is_not_in_the_prohibited_row(kiosk):
 
 def test_a_departure_is_not_screened(qtbot, kiosk, conn, student, config):
     """Students are swept on the way in, not on the way out."""
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     kiosk.btn_no_metal.click()
     qtbot.wait(10)
 
     import datetime as _dt
     later = _dt.datetime.now() + _dt.timedelta(minutes=config.scanning.debounce_minutes + 1)
-    kiosk._render(kiosk.service.handle_scan(encode(student, SECRET), at=later))
+    kiosk._render(kiosk.service.handle_scan(payload_for(student), at=later))
 
     assert not kiosk.screening_row.isVisible()
     assert kiosk._awaiting_scan is None
 
 
 def test_a_failing_screening_never_takes_the_gate_down(qtbot, kiosk, student):
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
 
     def boom(*a, **k):
         raise RuntimeError("database is locked")
@@ -546,7 +600,7 @@ def test_screening_can_be_turned_off_entirely(qtbot, conn, config, student):
     window = KioskWindow(ScanService(conn, cfg), windowed=True)
     qtbot.addWidget(window)
     window.show()
-    window._submit(encode(student, SECRET))
+    window._submit(payload_for(student))
     qtbot.wait(10)
 
     assert not window.screening_row.isVisible()
@@ -566,7 +620,7 @@ def test_a_category_button_records_the_incident(qtbot, kiosk, conn, student, mon
 
     monkeypatch.setattr(scr.IncidentDialog, "exec", fake_exec, raising=False)
 
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     kiosk.btn_metal.click()
     kiosk.category_buttons["bladed"].click()
     qtbot.wait(10)
@@ -590,7 +644,7 @@ def test_the_category_button_preselects_it_in_the_dialog(qtbot, kiosk, student, 
 
     monkeypatch.setattr(scr.IncidentDialog, "exec", fake_exec, raising=False)
 
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     kiosk.btn_metal.click()
     kiosk.category_buttons["pointed"].click()
     qtbot.wait(10)
@@ -609,7 +663,7 @@ def test_cancelling_the_dialog_leaves_an_unfinished_inspection(
     monkeypatch.setattr(scr.IncidentDialog, "exec",
                         lambda self: QDialog.Rejected, raising=False)
 
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     kiosk.btn_metal.click()
     kiosk.category_buttons["bladed"].click()
     qtbot.wait(10)
@@ -632,7 +686,7 @@ def test_school_tool_opens_custody_and_holds_the_item(
 
     monkeypatch.setattr(scr.CustodyDialog, "exec", fake_exec, raising=False)
 
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     kiosk.btn_metal.click()
     kiosk.btn_school_tool.click()
     qtbot.wait(10)
@@ -687,7 +741,7 @@ def test_the_strip_avatar_is_fitted_not_clipped(qtbot, kiosk, conn, student, tmp
     photo = _write_photo(tmp_path / "p.jpg", size=(400, 400))
     conn.execute("UPDATE students SET photo_path = ? WHERE id = ?", (str(photo), student))
 
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     kiosk.btn_metal.click()
     qtbot.wait(10)
 
@@ -696,7 +750,7 @@ def test_the_strip_avatar_is_fitted_not_clipped(qtbot, kiosk, conn, student, tmp
 
 
 def test_the_strip_falls_back_to_initials(qtbot, kiosk, student):
-    scan(qtbot, kiosk, encode(student, SECRET))
+    scan(qtbot, kiosk, payload_for(student))
     kiosk.btn_metal.click()
     qtbot.wait(10)
 

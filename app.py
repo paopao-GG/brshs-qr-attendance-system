@@ -104,7 +104,20 @@ def main(argv=None) -> int:
     window = KioskWindow(service, windowed=args.windowed)
 
     # --- SMS worker on its own thread -------------------------------------
-    provider = build_provider(args.provider, config)
+    # The kiosk has to open in the morning whatever the hardware is doing. A provider
+    # that cannot be built reports itself unavailable in the status bar instead; this
+    # guard is for the unforeseen, since GsmProvider no longer raises for an absent
+    # module. Null rather than Console on the way down: Console reports ok=True and
+    # would mark parent notifications sent when nothing was sent.
+    try:
+        provider = build_provider(args.provider, config)
+    except Exception as exc:
+        print(f"[SMS] {args.provider} provider could not be created: {exc}\n"
+              "      Starting without notifications; the status bar will show it.",
+              file=sys.stderr)
+        from trackify.notify.provider import NullProvider
+        provider = NullProvider()
+
     thread = QThread()
     worker = SmsWorker(provider, config)
     worker.moveToThread(thread)
@@ -117,6 +130,10 @@ def main(argv=None) -> int:
         window.camera.shutdown()
         worker.stop_from_ui()
         thread.quit()
+        # Bounded on purpose. If a send is still in flight when this elapses the row
+        # stays 'sending' and reconcile_stale marks it 'unknown' on the next launch --
+        # a human decision, which is the designed outcome for a message that may
+        # already have left. Waiting indefinitely for a modem would be worse.
         thread.wait(3000)
 
     app.aboutToQuit.connect(shutdown)

@@ -9,7 +9,9 @@ qr-out/
   11-Ingenuity/    ...
   11-Innovative/   ...
   manifest.csv     every code written: section, name, LRN, lrn_digits, payload, file
-  skipped.csv      the students with no LRN, with the cell each came from
+  skipped.csv      students with no LRN but a parent or phone -- chase these
+  excluded.csv     blank entries: no LRN, no parent, no phone -- not real students
+  changes.csv      what moved on the last run
 ```
 
 ## Two audiences
@@ -90,18 +92,37 @@ Two consequences of baking, accepted deliberately:
 
 ## What the current roster produces
 
-124 student rows in, **103 codes out**:
+124 rows in, **103 codes out**:
 
-| | Rows | Codes | Skipped |
-|---|---|---|---|
-| 11-Initiative | 43 | 37 | 6 |
-| 11-Ingenuity | 42 | 41 | 1 |
-| 11-Innovative | 39 | 25 | 14 |
-| **Total** | **124** | **103** | **21** |
+| | Rows | Codes | Needs an LRN | Excluded |
+|---|---|---|---|---|
+| 11-Initiative | 43 | 37 | 1 | 5 |
+| 11-Ingenuity | 42 | 41 | 0 | 1 |
+| 11-Innovative | 39 | 25 | 6 | 8 |
+| **Total** | **124** | **103** | **7** | **14** |
 
-`skipped.csv` lists one kind of problem: the **21 students whose LRN cell is blank**,
-so no code is possible. Fill those in and re-run — the tool simply adds what was
-missing.
+### Blank entries are excluded
+
+A row with **no LRN and no parent name and no phone** is not treated as a student. It
+carries nothing to build a code from and nobody to ask for the missing number, so
+chasing it wastes the adviser's time and buries the rows that can actually be fixed.
+Those 14 rows go to `excluded.csv` with the cell they came from.
+
+All three must be missing. A student **with** an LRN is never excluded no matter how
+empty the contact columns are — 24 of the 103 codes belong to students with no parent
+and no phone on file.
+
+Email takes no part in the rule. The one row it would have rescued
+(`Morillo, Andrei Joshua R.`) carries `shaneosurman@yahoo.com`, which is one of the
+misaligned addresses that belongs to `Lomerio` on the line above — so it would have
+kept him on someone else's data.
+
+Whitespace counts as empty: `Camba, Darius Lamuel C.` has a single space in the parent
+cell, which a plain truthiness test would read as a parent on file.
+
+`skipped.csv` is now only the **7 students who genuinely need an LRN** — each has a
+parent or a phone, so someone can be asked. Fill those cells in, re-run, and their
+codes appear as `NEW`.
 
 ### LRN length is not validated
 
@@ -142,11 +163,44 @@ which softens the module edges and is what makes a code fail to read. Print at l
 **25 mm** wide, and laminate **matte, not glossy**; glare on a glossy card is the usual
 reason a code will not scan.
 
-## Known gap before these codes will scan
+## How these codes reach a student
 
-These codes carry the **LRN**. The kiosk currently decodes a payload and looks the
-number up as `students.id`, the autoincrement primary key
-(`trackify/core/service.py:96`) — `students.lrn` is stored but read nowhere. Until the
-roster is imported with `students.id = LRN`, or `student_row()` is changed to look up
-by `lrn`, a scan will land on the "unrecognised code" screen even though the signature
-is valid. `manifest.csv` is exactly the input that importer needs.
+These codes carry the **LRN**, and the kiosk resolves them that way:
+`ScanService.student_row()` looks up `students.lrn`, then uses that row's own `id` for
+every write, because every table downstream is a foreign key to `students(id)`.
+
+That is deliberate, and it is what makes a printed card durable. Keyed on the
+autoincrement `id`, `seed_demo.py --reset` would renumber every student and silently
+invalidate every card already handed out. Keyed on the LRN — which follows the learner
+for life — **a card stays valid across a rebuild of the database.**
+
+**This tool and TRACKIFY's importer use the same rule** — an LRN and a name make a
+student, guardian details are optional. They did not always: the importer used to demand
+a parent name and mobile too, so this tool printed 103 cards against a database holding
+73 and 30 of them read *"Student not found"* at the gate. If you change the rule in one,
+change it in the other, or that comes back.
+
+Two things still worth knowing:
+
+- **A card only works for a student who has actually been imported.** A valid signature
+  is not the same as being on the roster. Import the same sheet through
+  **Attendance records → Student roster → Import XLSX**, or run `scripts/seed_demo.py`.
+- **An LRN with a leading zero cannot be carried.** The payload is built from
+  `encode(int(lrn))`, so the zero is lost. `roster.lrn_note()` flags it at import rather
+  than letting it surface as an unexplained refusal at the gate.
+
+## Working alongside the school's roster screen
+
+Nothing here reads or writes the database, so this can run on a completely separate
+Windows PC. The usual loop:
+
+```
+adviser updates student-info.xlsx
+        │
+        ├──▶ TRACKIFY:  Attendance records → Student roster → Import XLSX
+        └──▶ this tool: same file → NEW cards to print, UPDATED cards to reprint
+```
+
+Both read the same file and neither needs the other's machine. Run them against the
+**same version of the sheet**: a student imported but not carded cannot scan, and a
+student carded but not imported gets "Student not found".
