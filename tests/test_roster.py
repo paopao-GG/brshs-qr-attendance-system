@@ -161,6 +161,48 @@ def test_an_lrn_with_no_name_is_reported_not_silently_dropped():
 
 # --- sections and names ------------------------------------------------------
 
+# --- the MALE/FEMALE banners, which are also the only record of sex ----------
+
+@pytest.mark.parametrize("lrn,name,expected", [
+    ("MALE", None, "M"),
+    (None, "MALE", "M"),
+    ("FEMALE:", None, "F"),
+    (None, "female", "F"),
+    ("  MALE  ", None, "M"),
+    ("111995150037", "Almuena, Jan Adriel M.", None),
+])
+def test_a_banner_reads_as_a_sex(lrn, name, expected):
+    assert roster.banner_sex(lrn or "", name or "") == expected
+
+
+def test_female_is_not_read_as_male():
+    """'FEMALE' contains 'MALE'. A substring test here would file an entire girls'
+    block as boys, and every SF2 built from it would be wrong in a way that looks
+    tidy."""
+    assert roster.banner_sex("", "FEMALE") == "F"
+
+
+def test_a_banner_is_still_skipped_as_a_row():
+    """Reading it as data must not also import it as a student."""
+    assert roster.parse_row(("MALE", None, None, None), GRADE, SECTION) is None
+
+
+def test_a_row_carries_the_block_it_sits_under():
+    result = roster.parse_row(
+        ("111995150037", "Almuena, Jan Adriel M.", "Almuena, Edith M.", "9478179371"),
+        GRADE, SECTION, "F")
+    assert result.sex == "F"
+
+
+def test_a_row_above_any_banner_has_no_sex_and_no_note():
+    """Not a note, deliberately. A sheet written without banners would otherwise put
+    one on every row and bury the notes that matter -- an LRN that cannot make a card,
+    a guardian who cannot be texted."""
+    result = parse("111995150037", "Almuena, Jan Adriel M.")
+    assert result.sex is None
+    assert result.notes == ()
+
+
 def test_the_sheet_title_becomes_a_section():
     assert roster.parse_section("11-Initiative") == (11, "Initiative")
 
@@ -233,3 +275,56 @@ def test_a_leading_zero_lrn_is_flagged_as_unscannable():
 def test_a_non_numeric_lrn_says_no_code_can_be_made():
     result = parse("11995150O37", "Oh, Not Zero B.")   # letter O for a zero
     assert any("no QR code" in note for note in result.notes)
+
+
+# --- the whole sheet ---------------------------------------------------------
+
+def synthetic_workbook(path, rows, title="11-Initiative"):
+    """A stand-in for the office's file. Synthetic rows only -- see the module
+    docstring for why the real workbook is never opened."""
+    openpyxl = pytest.importorskip("openpyxl")
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = title
+    for row in rows:
+        sheet.append(list(row))
+    book.save(path)
+    return path
+
+
+def test_each_block_stamps_its_students(tmp_path):
+    """The banner is the only place the sheet records sex, and it appears mid-sheet --
+    at row 19 in one section's list and row 24 in the others -- so the block has to be
+    tracked while reading rather than inferred from a row number."""
+    path = synthetic_workbook(tmp_path / "roster.xlsx", [
+        ("LRN", "NAME OF STUDENT", "PARENT", "MOBILE"),
+        ("MALE", None, None, None),
+        ("111995150001", "Aquino, Ben", "Aquino, Rosa", "9171234567"),
+        ("111995150002", "Bautista, Carl", "Bautista, Ana", "9171234568"),
+        ("FEMALE", None, None, None),
+        ("111995150003", "Cruz, Dina", "Cruz, Lita", "9171234569"),
+    ])
+    students, rejected = roster.parse_workbook(path)
+
+    assert [(s.last, s.sex) for s in students] == [
+        ("Aquino", "M"), ("Bautista", "M"), ("Cruz", "F")]
+    assert rejected == []
+
+
+def test_a_block_does_not_leak_into_the_next_sheet(tmp_path):
+    """A section whose list has no banners must not inherit the previous one's and
+    file its whole class as female."""
+    openpyxl = pytest.importorskip("openpyxl")
+    path = tmp_path / "two.xlsx"
+    book = openpyxl.Workbook()
+    first = book.active
+    first.title = "11-Initiative"
+    for row in (("FEMALE", None, None, None),
+                ("111995150003", "Cruz, Dina", "Cruz, Lita", "9171234569")):
+        first.append(list(row))
+    second = book.create_sheet("11-Ingenuity")
+    second.append(["111995150004", "Diaz, Eli", "Diaz, Nora", "9171234570"])
+    book.save(path)
+
+    students, _ = roster.parse_workbook(path)
+    assert [(s.last, s.sex) for s in students] == [("Cruz", "F"), ("Diaz", None)]

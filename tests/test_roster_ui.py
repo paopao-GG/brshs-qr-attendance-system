@@ -12,8 +12,9 @@ pytest.importorskip("qtpy")
 from openpyxl import Workbook
 from qtpy.QtWidgets import QDialog
 
-from trackify.core import enrolment
+from trackify.core import enrolment, roster
 from trackify.core.service import ScanService
+from trackify.ui import roster as roster_ui
 
 from .conftest import payload_for
 
@@ -36,8 +37,19 @@ def select(page, row: int) -> None:
     page.table.selectRow(row)
 
 
+def column(name: str) -> int:
+    """Index of a named column. Looked up rather than written in, so inserting one --
+    Sex went in at position 2 for the SF2 export -- does not silently repoint every
+    assertion at its neighbour."""
+    return roster_ui.COLUMNS.index(name)
+
+
+def cell(page, row: int, name: str) -> str:
+    return page.table.item(row, column(name)).text()
+
+
 def names(page) -> list[str]:
-    return [page.table.item(r, 1).text() for r in range(page.table.rowCount())]
+    return [cell(page, r, "Name") for r in range(page.table.rowCount())]
 
 
 # --- the listing ------------------------------------------------------------
@@ -50,7 +62,7 @@ def test_a_student_with_no_guardian_number_is_marked(page):
     """A blank cell reads as 'nothing to do'. The whole point of importing a student
     with no contact is that somebody then chases the number."""
     row = names(page).index("Reyes, Ana")
-    assert "no contact" in page.table.item(row, 5).text()
+    assert "no contact" in cell(page, row, "Status")
     assert "with no guardian number" in page.status.text()
 
 
@@ -93,7 +105,7 @@ def test_an_inactive_student_is_still_listed(page, conn):
     page.refresh()
 
     assert len(names(page)) == 2
-    assert any("inactive" in page.table.item(r, 5).text()
+    assert any("inactive" in cell(page, r, "Status")
                for r in range(page.table.rowCount()))
 
 
@@ -301,6 +313,64 @@ def test_the_import_button_is_dead_when_nothing_would_change(qtbot, page, conn, 
 
     assert not dialog.import_button.isEnabled()
     assert dialog.import_button.text() == "Nothing to import"
+
+
+def summary_rows(dialog) -> dict:
+    """The preview's count table, as {label: count}."""
+    from qtpy.QtWidgets import QTableWidget
+    table = dialog.findChildren(QTableWidget)[0]
+    return {table.item(r, 0).text(): table.item(r, 1).text()
+            for r in range(table.rowCount())}
+
+
+def test_the_preview_counts_students_gaining_a_sex(qtbot, page, conn, sheet):
+    """Almost every row of a re-imported office sheet is an 'Updated' whose only change
+    is sex. Without its own line the screen would not mention what the import is for."""
+    student = conn.execute(
+        "SELECT * FROM students WHERE last_name = 'Dela Cruz'").fetchone()
+    path = sheet([(student["lrn"], "Dela Cruz, Juan", "Maria", 9171234567)])
+
+    dialog, plan = preview(page, conn, path)
+    qtbot.addWidget(dialog)
+
+    assert summary_rows(dialog)["Sex recorded"] == "1"
+    assert len(plan.sex_recorded) == 1
+
+
+def test_the_updated_line_names_sex_as_something_that_changes(qtbot, page, conn, sheet):
+    path = sheet([(555555555555, "Nuevo, Nina P.", "Nuevo, Rosa", 9171234567)])
+    dialog, _ = preview(page, conn, path)
+    qtbot.addWidget(dialog)
+
+    from qtpy.QtWidgets import QTableWidget
+    table = dialog.findChildren(QTableWidget)[0]
+    notes = {table.item(r, 0).text(): table.item(r, 2).text()
+             for r in range(table.rowCount())}
+    assert "sex" in notes["Updated"]
+
+
+def test_an_import_classifies_both_blocks_end_to_end(qtbot, page, conn, tmp_path):
+    """The whole point, through the screen rather than the parser: a sheet split into a
+    MALE and a FEMALE block lands each student in the right one."""
+    book = Workbook()
+    ws = book.active
+    ws.title = "7-Rizal"
+    ws.append(("MALE", None, None, None, None))
+    ws.append(("LRN:", "NAME OF STUDENT:", "NAME OF PARENT:", "NO. OF PARENT:", None))
+    ws.append((555555555551, "Aquino, Ben", "Aquino, Rosa", 9171234567))
+    ws.append(("FEMALE:", None, None, None, None))
+    ws.append((555555555552, "Cruz, Dina", "Cruz, Lita", 9171234568))
+    path = tmp_path / "blocks.xlsx"
+    book.save(path)
+
+    candidates, rejected = roster.parse_workbook(path)
+    plan = enrolment.plan_import(conn, candidates, rejected)
+    enrolment.apply_import(conn, plan, actor_name="T. San Jose")
+
+    stored = dict(conn.execute(
+        "SELECT last_name, sex FROM students WHERE lrn IN (?, ?)",
+        ("555555555551", "555555555552")).fetchall())
+    assert stored == {"Aquino": "M", "Cruz": "F"}
 
 
 def test_the_preview_says_imported_students_cannot_be_texted(qtbot, page, conn, sheet):

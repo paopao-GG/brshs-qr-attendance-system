@@ -81,15 +81,19 @@ def adviser(conn):
 def make_student(conn, section):
     counter = {"n": 0}
 
-    def _make(guardian_mobile="639171234567", first="Juan", last="Dela Cruz"):
+    def _make(guardian_mobile="639171234567", first="Juan", last="Dela Cruz",
+              sex=None):
+        # sex defaults to None -- "not recorded" -- because that is what every student
+        # created before the SF2 export existed actually is, and a fixture that quietly
+        # filled it in would hide the case the export has to handle.
         counter["n"] += 1
         cur = conn.execute(
             """INSERT INTO students
                (lrn, first_name, last_name, section_id, guardian_name,
-                guardian_mobile, consent_on_file, created_at)
-               VALUES (?, ?, ?, ?, 'Maria', ?, 1, ?)""",
+                guardian_mobile, sex, consent_on_file, created_at)
+               VALUES (?, ?, ?, ?, 'Maria', ?, ?, 1, ?)""",
             (f"13658412{counter['n']:04d}", first, last, section,
-             guardian_mobile, db.utcnow()),
+             guardian_mobile, sex, db.utcnow()),
         )
         # Set from the real row id rather than the counter: ids are only sequential in a
         # fresh database, and payload_for() has to agree with what is stored no matter

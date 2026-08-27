@@ -1,6 +1,6 @@
 """The student roster screen: list, import from a spreadsheet, edit, deactivate.
 
-Adding or correcting a student used to mean editing student-info.xlsx and asking the
+Adding or correcting a student used to mean editing data/student-list.xlsx and asking the
 developer to re-seed. That is fine while building and wrong for a system handed to a
 school -- a transferee in November should not need the developer.
 
@@ -37,11 +37,12 @@ from qtpy.QtWidgets import (
 )
 
 from ..core import enrolment, roster
+from ..core.config import PROJECT_ROOT
 from ..core.enrolment import LRN_CHANGED, NEW, UNCHANGED, UPDATED, EnrolmentError
 from ..core.mobile import for_display
 from . import icons
 
-COLUMNS = ("LRN", "Name", "Section", "Guardian", "Contact", "Status")
+COLUMNS = ("LRN", "Name", "Sex", "Section", "Guardian", "Contact", "Status")
 
 # Rows the operator is meant to act on, marked rather than merely left blank. A blank
 # cell reads as "nothing to do"; the point of importing a student with no guardian is
@@ -100,6 +101,24 @@ class StudentDialog(QDialog):
         if index >= 0:
             self.section.setCurrentIndex(index)
         form.addRow("Section", self.section)
+
+        # Blank first, so "not recorded" is the value you get by leaving it alone
+        # rather than something the dialog quietly picks for you.
+        self.sex = QComboBox()
+        for label, value in (("not recorded", ""), ("Male", "M"), ("Female", "F")):
+            self.sex.addItem(label, value)
+        index = self.sex.findData(student["sex"] or "")
+        if index >= 0:
+            self.sex.setCurrentIndex(index)
+        form.addRow("Sex", self.sex)
+
+        sex_hint = QLabel(
+            "DepEd SF2 is a male block and a female block. A student left as "
+            "\"not recorded\" is listed under neither and the export says so."
+        )
+        sex_hint.setObjectName("DialogHint")
+        sex_hint.setWordWrap(True)
+        form.addRow("", sex_hint)
 
         self.guardian = QLineEdit(student["guardian_name"] or "")
         form.addRow("Guardian", self.guardian)
@@ -165,6 +184,7 @@ class StudentDialog(QDialog):
             "last_name": self.last.text(),
             "lrn": self.lrn.text(),
             "section_id": self.section.currentData(),
+            "sex": self.sex.currentData() or None,
             "guardian_name": self.guardian.text().strip() or None,
             "guardian_mobile": self.mobile.text().strip(),
             "consent_on_file": 1 if self.consent.isChecked() else 0,
@@ -260,7 +280,14 @@ class ImportPreviewDialog(QDialog):
         counts = plan.counts
         rows = [
             ("New", counts[NEW], "students who will be created"),
-            ("Updated", counts[UPDATED], "a name, section or guardian detail changed"),
+            ("Updated", counts[UPDATED],
+             "a name, section, sex or guardian detail changed"),
+            # Its own line because it is invisible in the one above. Re-importing the
+            # office sheet after students.sex existed makes almost every row an
+            # "Updated" whose only change is sex, and a screen that did not say so
+            # would not mention the thing the import was run for.
+            ("Sex recorded", len(plan.sex_recorded),
+             "gaining M or F - needed for the DepEd SF2"),
             ("LRN changed", counts[LRN_CHANGED],
              "their printed card will stop working - reprint it"),
             ("Unchanged", counts[UNCHANGED], ""),
@@ -436,6 +463,7 @@ class RosterPage(QWidget):
             cells = (
                 row["lrn"],
                 f"{row['last_name']}, {row['first_name']}",
+                row["sex"] or "-",
                 f"{row['grade_level']}-{row['section_name']}",
                 row["guardian_name"] or "-",
                 for_display(row["guardian_mobile"]) or "-",
@@ -467,8 +495,12 @@ class RosterPage(QWidget):
     # -- actions -------------------------------------------------------------
 
     def _import(self) -> None:
+        # Opens where the roster actually lives rather than the working directory,
+        # which is wherever the kiosk happened to be launched from.
+        start = PROJECT_ROOT / "data"
         path, _ = QFileDialog.getOpenFileName(
-            self, "Import students", "", "Excel workbook (*.xlsx)"
+            self, "Import students", str(start if start.is_dir() else ""),
+            "Excel workbook (*.xlsx)",
         )
         if not path:
             return

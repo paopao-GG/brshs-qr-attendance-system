@@ -148,3 +148,65 @@ def test_every_table_is_covered_by_the_demo_reset(conn):
         )
     }
     assert in_db - listed == set(), f"not cleared by --reset: {in_db - listed}"
+
+
+# --- students.sex, added for the SF2 export ----------------------------------
+
+V1_STUDENTS = """
+CREATE TABLE students (
+    id              INTEGER PRIMARY KEY,
+    lrn             TEXT    NOT NULL UNIQUE,
+    first_name      TEXT    NOT NULL,
+    last_name       TEXT    NOT NULL,
+    section_id      INTEGER NOT NULL,
+    guardian_name   TEXT,
+    guardian_mobile TEXT,
+    photo_path      TEXT,
+    consent_on_file INTEGER NOT NULL DEFAULT 0,
+    notify_optin    INTEGER NOT NULL DEFAULT 1,
+    active          INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT    NOT NULL
+)
+"""
+
+
+@pytest.fixture
+def db_without_sex(tmp_path):
+    conn = sqlite3.connect(tmp_path / "presf2.db", isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    conn.execute(V1_STUDENTS)
+    conn.execute(
+        """INSERT INTO students (lrn, first_name, last_name, section_id, created_at)
+           VALUES ('136584120001', 'Juan', 'Dela Cruz', 1, '2026-08-01')"""
+    )
+    return conn
+
+
+def test_sex_reaches_a_database_that_predates_the_sf2_export(db_without_sex):
+    assert "sex" not in {
+        r["name"] for r in db_without_sex.execute("PRAGMA table_info(students)")
+    }
+    db.init_db(db_without_sex)
+    assert "sex" in {
+        r["name"] for r in db_without_sex.execute("PRAGMA table_info(students)")
+    }
+
+
+def test_existing_students_read_back_as_sex_not_recorded(db_without_sex):
+    """Which is exactly what they are. A default of 'M' would have put a hundred and
+    three children into a block on a government form on no evidence at all."""
+    db.init_db(db_without_sex)
+    assert db_without_sex.execute(
+        "SELECT sex FROM students").fetchone()["sex"] is None
+
+
+def test_the_migrated_column_enforces_the_same_two_values(db_without_sex):
+    """SQLite accepts a CHECK on ADD COLUMN, unlike NOT NULL without a default -- so a
+    migrated database is not looser than a freshly created one."""
+    db.init_db(db_without_sex)
+    with pytest.raises(sqlite3.IntegrityError):
+        db_without_sex.execute(
+            """INSERT INTO students (lrn, first_name, last_name, section_id,
+                   sex, created_at)
+               VALUES ('136584120002', 'Ana', 'Reyes', 1, 'X', '2026-08-01')"""
+        )

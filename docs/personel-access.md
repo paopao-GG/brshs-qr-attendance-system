@@ -32,6 +32,7 @@ register for one section, one month
         ├── Class suspension        ─▶ excuse a whole section for a date
         ├── Send weekly summaries   ─▶ queue one attendance text per guardian
         ├── Export XLSX             ─▶ the same grid as a spreadsheet
+        ├── Export SF2              ─▶ the DepEd form itself, ready to print and sign
         ├── Export analytics        ─▶ six-sheet workbook: trend, risk, AHP, screening
         ├── Change password         ─▶ rotate the shared password
         └── Close                   ─▶ back to the gate
@@ -152,7 +153,7 @@ shape of the SF2 register the school already uses on paper.
  Attendance register                                 8-Bonifacio  ·  August 2026
  Section [8-Bonifacio] [August] [2026]
  [Edit log] [Student roster] [Class suspension] [Change password]
- [Send weekly summaries] [Export analytics] [Export XLSX] [Close]
+ [Send weekly summaries] [Export analytics] [Export XLSX] [Export SF2] [Close]
  ✓ present   L late   ✗ absent   E excused   O online   shaded = set by a person
  ─────────────────────────────────────────────────────────────────────────────
                     3  4  5  6  7 ... 13 14        P    L    A    E    Rate
@@ -177,10 +178,13 @@ SVG paths** in `trackify/ui/icons.py`, not typed as characters — the same reas
 emoji off the inspection page: a glyph that depends on a font present on the development laptop
 and absent on the Pi fails on the only machine that matters.
 
-The **export keeps letters** (`P L A E O`) deliberately. That is the convention on the SF2
-register staff already use on paper, and a check character in a spreadsheet depends on the font
-of whoever opens it — Excel, LibreOffice, or Google Sheets. Letters render everywhere and print
-cleanly. The on-screen legend names both.
+The **XLSX register keeps letters** (`P L A E O`) deliberately. A check character in a spreadsheet
+depends on the font of whoever opens it — Excel, LibreOffice, or Google Sheets — while letters
+render everywhere and print cleanly. The on-screen legend names both.
+
+Those letters are TRACKIFY's, not DepEd's. The SF2 export in §6.2 uses the form's own codes —
+blank for present, `x` for absent, a shaded cell for tardy — which carry less information and are
+the only thing the Division office will accept.
 
 ### What the shading means
 
@@ -204,12 +208,119 @@ change was made.
 
 ## 6. Export
 
-`Export XLSX` writes the same grid via `openpyxl`, with the school name, the section, the month,
-a legend, and per-student totals. Corrected cells are tinted in the spreadsheet too, and a note
-at the top says what the tint means.
+Two register exports, deliberately, because they are read by different people for different
+reasons.
+
+### 6.1 `Export XLSX` — the working register
+
+The same grid via `openpyxl`, with the school name, the section, the month, a legend, and
+per-student totals. Corrected cells are tinted in the spreadsheet too, and a note at the top says
+what the tint means.
 
 A file shaped like the form staff already know is a file they will actually check; a database
-dump gets filed and ignored.
+dump gets filed and ignored. **This is the one to read when checking the data** — the shading and
+the per-student rate are what expose a bad record.
+
+### 6.2 `Export SF2` — the DepEd form
+
+`trackify/export/sf2.py` builds School Form 2, *Daily Attendance Report of Learners*, to the
+geometry of the LIS workbook the school already submits — 47 columns, 25 day slots, a male block
+above a female block, the summary panel and the two signature lines. It is a submission, not a
+working document, and it carries none of the register's shading or rates.
+
+It is **built, not filled from a template.** The school's file has 17 male and 22 female rows
+baked into its merges; inserting rows for a class of 41 tears every merge and border below the
+insertion point. The geometry is a handful of constants, the row count is not negotiable.
+
+**The codes are the form's, and they are not the register's:**
+
+| TRACKIFY status | SF2 cell | Counted as |
+|---|---|---|
+| present | blank | present |
+| online | blank | present, and named in REMARKS |
+| late | shaded | present, and shaded — see below |
+| absent | `x` | absent |
+| excused | blank, named in REMARKS | **neither** |
+| no record on a class day | blank, named in REMARKS | neither |
+
+An **excused day is blank**, not `x`. That follows TRACKIFY's own rule that an excused day leaves
+the rate denominator rather than counting against a student ([analytics-model.md](analytics-model.md)
+§1) — marking it absent here would contradict the register the same school gets from the same
+database on the same afternoon.
+
+**Tardiness** is a half-shaded cell on the paper form: upper half for a late comer, lower half for
+cutting classes. A spreadsheet cell cannot be half filled, and TRACKIFY only ever detects the
+upper case — it sees an arrival time, never a walkout — so the whole cell is shaded and the legend
+below the grid says which half it stands for.
+
+**Which dates get a column.** Not simply "the weekdays of the month", and `school_days` alone will
+not do either: `sessions.get_school_day()` writes `is_school_day = 1` for any date the kiosk so
+much as ticks over, so an evening somebody opened the app becomes a school day nobody attended. A
+date therefore has to be *attested* by attendance somewhere in the database:
+
+| Situation | Column? |
+|---|---|
+| `is_school_day = 0` (suspended) | never |
+| this section has attendance that date | yes — it was here |
+| weekday, in `school_days`, attested elsewhere | yes — the school ran and **this section's records are what is missing**, which is worth showing |
+| anything else | no |
+
+More than 25 class days in a month is **refused, not truncated** — dropping the last column would
+silently understate every absence in it.
+
+### 6.3 Sex, and the two blocks
+
+SF2 is a male block above a female block, each numbered from 1, with separate per-day totals and
+an M / F / TOTAL summary. `students.sex` carries it, and it is **nullable on purpose**: a student
+whose sex nobody has recorded must still enrol, scan and be counted.
+
+It is captured from the `MALE` / `FEMALE` banners in the office spreadsheet — the only place that
+file records it. `roster.py` used to skip those rows; it now reads them as data while it walks the
+sheet, and resets per worksheet so a section with no banners cannot inherit the previous one's.
+Matching is exact, because `FEMALE` contains `MALE` and a substring test would file an entire
+girls' block as boys — wrong in a way that looks tidy.
+
+The import preview counts them on their own line, **Sex recorded**. Re-importing the sheet after
+the column existed makes almost every row an "Updated" whose only change is sex, so a screen that
+only said "updated" would not mention the thing the import was run for.
+
+A student with no sex recorded is listed in a **third block**, not dropped — silently omitting
+them would make the totals disagree with the roster, the one failure nobody would catch by looking
+at the form. The export says how many, on the form and in the status line, and the block
+disappears once everyone is placed. **Until then the file is not a conforming SF2.** Set it in the
+student roster (§9) or re-import the office sheet.
+
+### 6.4 What is left blank
+
+Enrolment as of the first Friday, late enrolment, transfers in and out, and drop-outs are not
+things TRACKIFY records. Their boxes are **left empty for a person to write in**, and the
+percentage of enrolment, which is a ratio against a figure nobody here holds, is left empty too.
+
+An unfilled box is obviously unfinished. A box filled with a plausible-looking default is quietly
+wrong on a document a principal signs.
+
+What *is* computed: number of days of classes, registered learners as of end of month (by sex),
+average daily attendance (by sex), percentage of attendance for the month, and the number of
+students absent for five consecutive days. That last one counts **class days, not calendar days** —
+Friday and the following Monday are consecutive, and a suspended Wednesday does not break a run,
+because it was never a day the child could have attended.
+
+### 6.5 The four fields that live in config
+
+`[sf2]` in `config.toml`:
+
+```toml
+[sf2]
+school_id = "301814"
+school_year = "2026 - 2027"
+adviser_name = ""            # blank falls back to the section's adviser
+school_head_name = ""
+```
+
+Blank prints a blank line. `seed_demo.py` seeds the users table with role placeholders rather than
+people — `sections.adviser_id` needs a row to point at and there are no logins yet — so
+`"Class Adviser"` and the other placeholders are treated as blank rather than printed over a
+signature line, where they would read as somebody's name.
 
 ---
 
@@ -237,6 +348,7 @@ never a half-finished form to discard.
 | The roster screen and its dialogs | `trackify/ui/roster.py` |
 | Password hashing, change, and the attempt lockout | `trackify/core/security.py` |
 | XLSX register export | `trackify/export/xlsx.py` |
+| DepEd SF2 export | `trackify/export/sf2.py` |
 | The analytics workbook | `trackify/export/analytics.py` |
 | Weekly summaries and the absence reminder | `trackify/notify/periodic.py` |
 | Register, edit log, and all the dialogs | `trackify/ui/records.py` |
@@ -254,10 +366,14 @@ parent who changes number, is a job for whoever is at the kiosk.
  Student roster                                          103 students · 3 sections
  [Search…            ]  [All sections ▾]      [Import XLSX] [Edit] [Deactivate] [Back]
  ─────────────────────────────────────────────────────────────────────────────
-  LRN            NAME                     SECTION        GUARDIAN      CONTACT
-  111995150037   Almuena, Jan Adriel M.   11-Initiative  Almuena, E.   0947 817 9371
-  432511150038   Arado, Sean Eusef M.     11-Ingenuity   -             -    no contact
+  LRN            NAME                     SEX  SECTION        GUARDIAN      CONTACT
+  111995150037   Almuena, Jan Adriel M.   M    11-Initiative  Almuena, E.   0947 817 9371
+  432511150038   Arado, Sean Eusef M.     -    11-Ingenuity   -             -   no contact
 ```
+
+A `-` under SEX means "not recorded", which is a real state and not an error. It is the one
+column the SF2 export cannot do without — see §6.3 — so the edit dialog carries an M / F picker
+that starts blank.
 
 ### One rule for who is a student
 
@@ -274,14 +390,18 @@ column is Excel, which is the thing this screen replaces.
 
 | | |
 |---|---|
-| **May** | create a student, correct a name, move a section, **fill in** a blank guardian detail |
-| **May not** | grant or revoke `consent_on_file`, reactivate a deactivated student, **blank out** a guardian detail a person had typed in |
+| **May** | create a student, correct a name, move a section, correct a sex, **fill in** a blank guardian detail or a blank sex |
+| **May not** | grant or revoke `consent_on_file`, reactivate a deactivated student, **blank out** a guardian detail or a sex a person had typed in |
 
 The last one is not a detail. The office spreadsheet is chronically incomplete — that is
 the premise of this whole screen — so if importing it nulled every number staff had
 entered, the next import would quietly undo an afternoon's work. **A blank cell means "no
 information", not "delete what you have."** Clearing a number is a deliberate act in the
 edit dialog, by a person, with a reason.
+
+Sex sits under the same rule, one step removed. It comes from the `MALE` / `FEMALE` banner
+rows rather than a column, so a sheet somebody tidied those out of would otherwise blank a
+field the roster screen had filled.
 
 Consent is excluded for a different reason: `queue.py` checks it before enqueueing
 anything, and it is the RA 10173 record. An emailed spreadsheet is not the authority for

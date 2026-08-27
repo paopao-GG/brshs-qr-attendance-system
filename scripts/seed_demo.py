@@ -4,9 +4,11 @@
     python scripts/seed_demo.py --reset --roster path/to/other.xlsx
     python scripts/seed_demo.py --reset --consent      # only once consent is collected
 
-Reads student-info.xlsx -- one worksheet per section -- and seeds every row carrying an
-LRN. That is the same rule qr-generator uses, deliberately: when the two disagreed, the
-generator printed cards for students the database had never heard of. Missing guardian
+Reads data/student-list.xlsx -- one worksheet per section, each split into a MALE and a
+FEMALE block -- and seeds every row carrying an LRN. That is the same rule qr-generator
+uses, deliberately: when the two disagreed, the generator printed cards for students the
+database had never heard of. The banners are read as data, not skipped: they are the only
+place the sheet records a student's sex, and DepEd SF2 cannot be built without it. Missing guardian
 details are reported, not fatal -- the roster screen in the app is where they get filled
 in, and refusing the student here would mean the only way to fix them is Excel.
 
@@ -28,7 +30,9 @@ from trackify.core.mobile import normalise
 from trackify.core.qrcodes import encode
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_ROSTER = ROOT / "student-info.xlsx"
+# The roster lives under data/, which is gitignored in full. It held the repo root once
+# and reached a public GitHub repo from there; see .gitignore.
+DEFAULT_ROSTER = ROOT / "data" / "student-list.xlsx"
 
 # Role placeholders, not people. sections.adviser_id needs a row to point at, but
 # inventing named staff puts fictional employees in a database that now holds real
@@ -50,6 +54,7 @@ OWNER = {
     "section_name": "Ingenuity",
     "guardian_name": "Demo Learner (own handset - demo)",
     "guardian_mobile": "09171234567",
+    "sex": "M",
 }
 
 
@@ -139,12 +144,14 @@ def main() -> int:
         conn.execute(
             """INSERT INTO students
                (lrn, first_name, last_name, section_id, guardian_name,
-                guardian_mobile, consent_on_file, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                guardian_mobile, sex, consent_on_file, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            # sex comes from the MALE/FEMALE banner in the sheet. It is None for any
+            # student listed above one, and the SF2 export reports how many.
             (candidate.lrn, candidate.first, candidate.last,
              section_for(candidate.grade_level, candidate.section_name),
              candidate.guardian_name or None, candidate.guardian_mobile,
-             consent, db.utcnow()),
+             candidate.sex, consent, db.utcnow()),
         )
         _print_row(candidate.lrn, candidate.full_name, candidate.section_label,
                    candidate.guardian_mobile, secret)
@@ -175,19 +182,21 @@ def _grant_owner_consent(conn, section_for) -> sqlite3.Row:
     if existing:
         conn.execute(
             """UPDATE students SET guardian_name = ?, guardian_mobile = ?,
-               consent_on_file = 1 WHERE id = ?""",
-            (OWNER["guardian_name"], mobile, existing["id"]),
+               sex = COALESCE(sex, ?), consent_on_file = 1 WHERE id = ?""",
+            # COALESCE, not a plain assignment: if the sheet's banner already placed
+            # him, that is the school's record and this hardcoded value is not.
+            (OWNER["guardian_name"], mobile, OWNER["sex"], existing["id"]),
         )
     else:
         # The sheet no longer lists him. Put the row back so the demo still works.
         conn.execute(
             """INSERT INTO students
                (lrn, first_name, last_name, section_id, guardian_name,
-                guardian_mobile, consent_on_file, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, 1, ?)""",
+                guardian_mobile, sex, consent_on_file, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)""",
             (OWNER["lrn"], OWNER["first"], OWNER["last"],
              section_for(OWNER["grade_level"], OWNER["section_name"]),
-             OWNER["guardian_name"], mobile, db.utcnow()),
+             OWNER["guardian_name"], mobile, OWNER["sex"], db.utcnow()),
         )
     return conn.execute("SELECT * FROM students WHERE lrn = ?",
                         (OWNER["lrn"],)).fetchone()

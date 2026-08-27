@@ -68,6 +68,9 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     "notifications": {"next_attempt_at": "TEXT"},
     "attendance_days": {"corrected_by_name": "TEXT", "correction_type": "TEXT"},
     "audit_log": {"actor_name": "TEXT"},
+    # SQLite does accept a CHECK on ADD COLUMN (unlike NOT NULL without a default),
+    # so a migrated database enforces the same two values as a fresh one.
+    "students": {"sex": "TEXT CHECK (sex IS NULL OR sex IN ('M', 'F'))"},
     # NOT NULL needs a non-null default for ALTER TABLE ADD COLUMN; existing rows read
     # back as an unfloored composite, which is what they were.
     "risk_scores": {"incidents": "INTEGER NOT NULL DEFAULT 0",

@@ -24,6 +24,7 @@ Research: [researcher name redacted] · Bicol Regional Science High School, Regi
 | **[hardware.md](hardware.md)** | Raspberry Pi 5 station, camera and GSM bring-up, screening procedure metrics. §§1–4, 6, 7, 9, 10 describe a detector the project no longer builds |
 | **[research-plan-review.md](research-plan-review.md)** | Defects found in `RESEARCH-PLANCURRENT.docx`, with fixes, by priority |
 | `RESEARCH-PLANCURRENT.docx` | The research plan itself. Source of record — not modified by these docs |
+| `SF2_2025_Grade-10-Year-IV-RESILIENT.xls` | The school's own LIS-generated School Form 2. The reference the export's geometry was read out of — not modified, not read at runtime |
 
 ---
 
@@ -54,6 +55,9 @@ Stated in full in [flow.md](flow.md) §2. In short:
 | QR input | USB webcam; a USB HID scanner is a drop-in upgrade | [hardware.md](hardware.md) §5 |
 | QR payload | Keyed on the **LRN**, HMAC-signed. A printed card outlives any one database, so keying it on a row id would silently invalidate every card on a reseed | [TDD.md](TDD.md) §6 |
 | SMS transport | **SIM800C GSM module** on USB serial. Reverses the earlier HTTP-API decision on cost and privacy; 2G's phase-out under NTC MC 002-09-2025 is a documented limitation | [sms-notifications.md](sms-notifications.md) §1 |
+| Register exports | **Two, not one.** `Export XLSX` is the working register — letters, corrections shading, a per-student rate — and `Export SF2` is the DepEd form, which carries none of that because it is a submission | [personel-access.md](personel-access.md) §6 |
+| SF2 layout | **Built, not filled from a template.** The school's file has 17 male and 22 female rows baked into its merges; inserting rows for a class of 41 tears every merge below them | [personel-access.md](personel-access.md) §6.2 |
+| Where sex comes from | The `MALE` / `FEMALE` **banner rows** in the office spreadsheet — the only place that file records it. The importer reads them as data rather than skipping them | [personel-access.md](personel-access.md) §6.3 |
 | SMS delivery bias | **At-most-once.** An ambiguous send is parked as `unknown` for a human, never auto-retried — a missed text is recoverable, a duplicate erodes trust | [flow.md](flow.md) §4.1 |
 | Notification gate | `consent_on_file`, checked at enqueue. No consent, no message, whatever the policy says | [sms-notifications.md](sms-notifications.md) §6 |
 | Absence prediction | Logistic regression — a linear model cannot output a probability | [analytics-model.md](analytics-model.md) §3–4 |
@@ -65,9 +69,10 @@ Stated in full in [flow.md](flow.md) §2. In short:
 
 ## Status
 
-**Built and under test.** 43 modules, ~10,600 lines, **687 passing tests** across 33 test
+**Built and under test.** 44 modules, ~11,500 lines, **742 passing tests** across 34 test
 modules. The full entry flow, screening, custody chain, records screen with corrections, roster
-import, SMS queue over a live SIM800C, analytics and both exports are implemented and exercised.
+import, SMS queue over a live SIM800C, analytics and all three exports are implemented and
+exercised.
 
 Verified end to end on real hardware: all seven guardian message types have been sent from the
 module to a live handset.
@@ -77,6 +82,7 @@ module to a live handset.
 | Scan → attendance → notification | Working, on hardware |
 | Screening, incidents, custody | Working |
 | Records screen, corrections, roster import, XLSX export | Working |
+| DepEd SF2 export | Working — every student is classified M or F |
 | Analytics (trend, risk, AHP, screening) and the workbook | Working |
 | Weekly summary and absence reminder SMS | Working |
 | Adviser dashboard, per-user logins | **Not built** — one shared password gates the records screen; see [personel-access.md](personel-access.md) §3 |
@@ -94,8 +100,12 @@ R², the AUC and the band distribution are all outputs of a simulator. Clear the
 
 ### Remaining before the pilot
 
-1. Apply the Priority 1 fixes in [research-plan-review.md](research-plan-review.md) to the .docx
-2. Collect signed consent — `consent_on_file` is 1 for a single student, so the SMS queue
+1. **Re-import `data/student-list.xlsx` from the roster screen.** The sex backfill was applied
+   on its own, so the database is knowingly behind the office sheet by **6 students who were
+   never created and 1 LRN that is still wrong**. The full import closes both — and will warn
+   that the corrected LRN means one printed card must be reprinted
+2. Apply the Priority 1 fixes in [research-plan-review.md](research-plan-review.md) to the .docx
+3. Collect signed consent — `consent_on_file` is 1 for a single student, so the SMS queue
    currently refuses 102 of 103 sends
-3. Deploy to the Pi 5 and run the kiosk from it
-4. One-week pilot on a single section before the 20-day run
+4. Deploy to the Pi 5 and run the kiosk from it
+5. One-week pilot on a single section before the 20-day run

@@ -27,6 +27,11 @@ CREATE TABLE IF NOT EXISTS students (
     first_name      TEXT    NOT NULL,
     last_name       TEXT    NOT NULL,
     section_id      INTEGER NOT NULL REFERENCES sections(id) ON DELETE RESTRICT,
+    -- NULLABLE on purpose. DepEd SF2 splits a class into a male and a female block,
+    -- so the export needs this -- but a student whose sex nobody has recorded must
+    -- still enrol, scan and be counted. NULL means "not recorded", never "other":
+    -- the form has two blocks and inventing a third would not be reportable.
+    sex             TEXT    CHECK (sex IS NULL OR sex IN ('M', 'F')),
     guardian_name   TEXT,
     guardian_mobile TEXT,               -- stored normalised as 639XXXXXXXXX
     photo_path      TEXT,

@@ -306,6 +306,46 @@ def test_export_writes_a_file(qtbot, page, conn, config, tmp_path, monkeypatch):
     assert "Exported to" in page.status.text()
 
 
+def test_the_sf2_button_writes_the_deped_form(qtbot, page, conn, config, tmp_path,
+                                              monkeypatch):
+    """A separate button from Export XLSX, and a separate file. The register carries
+    the corrections shading and the per-student rate that staff read to spot bad data;
+    SF2 carries neither by design, because it is a submission."""
+    from openpyxl import load_workbook
+    from qtpy.QtWidgets import QFileDialog
+
+    student = page._rows[0].student_id
+    record_scan(conn, student, at(7, 0), config)
+    page.refresh()
+
+    target = tmp_path / "sf2.xlsx"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(target), "")))
+    page._export_sf2()
+
+    assert target.exists()
+    assert load_workbook(target).active["A1"].value.startswith("School Form 2 (SF2)")
+    assert "SF2 exported to" in page.status.text()
+
+
+def test_the_sf2_button_says_who_is_missing_a_sex(qtbot, page, conn, config, tmp_path,
+                                                  monkeypatch):
+    """The export still writes -- refusing would leave the adviser with nothing while
+    they chase two office records -- but it must not let the gap pass unremarked."""
+    from qtpy.QtWidgets import QFileDialog
+
+    student = page._rows[0].student_id
+    record_scan(conn, student, at(7, 0), config)
+    page.refresh()
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(tmp_path / "s.xlsx"), "")))
+    page._export_sf2()
+
+    assert "2 student(s) have no sex recorded" in page.status.text()
+    assert "not a valid SF2" in page.status.text()
+
+
 def test_cancelling_the_save_dialog_writes_nothing(qtbot, page, monkeypatch):
     from qtpy.QtWidgets import QFileDialog
     monkeypatch.setattr(QFileDialog, "getSaveFileName",

@@ -238,7 +238,8 @@ the comparison against manually recorded attendance in Phase III.
 
 **Built.** Staff reach this through a password-gated page on the kiosk — see
 [personel-access.md](personel-access.md) for the correction types, the supersede sequence, the
-edit log, and the XLSX export. Two things about it belong here:
+edit log, and the two register exports — the working XLSX register and the DepEd SF2. Two things
+about it belong here:
 
 - **Access is by one shared password, so the log records *what* changed but not *who*.** A typed
   name accompanies every correction and is stored in `corrected_by_name`; `corrected_by`, the
@@ -429,7 +430,7 @@ Mapping each feature in research question 1 of the research plan to where it liv
 |---|---|---|
 | QR code-based school identification for attendance | §3 steps 2–5 | Built |
 | Real-time and automated attendance logging | §3 step 6; §5.5 | Built |
-| Automated attendance **reporting** | §4.3; [personel-access.md](personel-access.md) | Built — the SF2-shaped section register with its XLSX export, plus a six-sheet analytics workbook |
+| Automated attendance **reporting** | §4.3; [personel-access.md](personel-access.md) | Built — the working section register as XLSX, **the DepEd School Form 2 itself** to the geometry of the school's own LIS workbook, plus a six-sheet analytics workbook |
 | Recording of verified prohibited-item incidents in the student's profile | §3 steps 10–14; Rule 1; [prohibited-items.md](prohibited-items.md) | Built — screening outcomes, incidents and the full custody chain. The detector is **a separate device**, so the system records a guard's judgement rather than a sensor reading |
 | SMS notifications to parents/guardians | §3 step 16; §4.1 | Built |
 | Statistical summary of attendance data | §4.3; [analytics-model.md](analytics-model.md) | Built — trend regression, pooled absence model, AHP weights, composite risk with band floors, screening procedure metrics |

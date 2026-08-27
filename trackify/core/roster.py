@@ -34,7 +34,12 @@ LRN_LENGTH = 12
 # Section banners inside the sheet -- the office splits each list into a male and a female
 # block, so these appear mid-sheet as well as at the top. Matched by content, never by row
 # number: the banner sits at row 19 in one sheet and row 24 in the others.
-BANNERS = {"MALE", "FEMALE"}
+#
+# The banner is also the ONLY place the sheet records a student's sex, and DepEd SF2
+# cannot be produced without it: the form is two blocks with separate per-day totals.
+# So the banner is read as data rather than merely skipped -- exact equality, because
+# 'FEMALE' contains 'MALE' and a substring test would file every girl as a boy.
+BANNERS = {"MALE": "M", "FEMALE": "F"}
 HEADER_FIRST_CELL = "LRN"
 
 _SECTION = re.compile(r"^\s*(\d+)\s*[-–]\s*(.+?)\s*$")
@@ -54,6 +59,9 @@ class Candidate:
     # from the field being blank, which is a rejection -- see reject_reasons().
     guardian_mobile: str | None
     notes: tuple[str, ...] = ()
+    # 'M', 'F', or None when the row sat above any banner. Defaulted so every existing
+    # caller and test that builds a Candidate by hand keeps working.
+    sex: str | None = None
 
     @property
     def full_name(self) -> str:
@@ -122,8 +130,18 @@ def is_skippable(lrn: str, name: str) -> bool:
         return True
     if name.upper().startswith("NAME OF"):
         return True
+    return banner_sex(lrn, name) is not None
+
+
+def banner_sex(lrn: str, name: str) -> str | None:
+    """'MALE' -> 'M', 'FEMALE' -> 'F', anything else -> None.
+
+    The office writes the banner in either of the first two columns depending on the
+    sheet, so both are tried. Kept separate from is_skippable() because parse_workbook
+    needs to know WHICH banner it just passed, not merely that it passed one.
+    """
     banner = (name or lrn).rstrip(":").strip().upper()
-    return banner in BANNERS
+    return BANNERS.get(banner)
 
 
 def lrn_note(lrn: str) -> str | None:
@@ -174,8 +192,13 @@ def surname_note(last: str, guardian: str) -> str | None:
             "- same name, different characters")
 
 
-def parse_row(row: tuple, grade_level: int, section_name: str) -> Candidate | Rejected | None:
-    """One spreadsheet row -> a student, a rejection, or None for a banner/header."""
+def parse_row(row: tuple, grade_level: int, section_name: str,
+              sex: str | None = None) -> Candidate | Rejected | None:
+    """One spreadsheet row -> a student, a rejection, or None for a banner/header.
+
+    `sex` is the block the row sits under, which only parse_workbook knows -- the row
+    itself carries no such column.
+    """
     lrn, name, guardian, mobile = (cell(v) for v in _first_four(row))
 
     if is_skippable(lrn, name):
@@ -237,6 +260,12 @@ def parse_row(row: tuple, grade_level: int, section_name: str) -> Candidate | Re
     if note := surname_note(last, guardian):
         notes.append(note)
 
+    # No note when `sex` is None, deliberately. A sheet written without banners would
+    # otherwise put one on every single row and bury the notes that matter -- an LRN
+    # that cannot make a card, a guardian who cannot be texted. Where it does matter is
+    # the SF2 export, which counts the unrecorded and says so on the form itself, and
+    # the roster screen, which shows the column.
+
     return Candidate(
         lrn=lrn,
         first=first,
@@ -246,6 +275,7 @@ def parse_row(row: tuple, grade_level: int, section_name: str) -> Candidate | Re
         guardian_name=guardian,
         guardian_mobile=stored,
         notes=tuple(notes),
+        sex=sex,
     )
 
 
@@ -269,8 +299,15 @@ def parse_workbook(path: str | Path) -> tuple[list[Candidate], list[Rejected]]:
 
     for sheet in book.worksheets:
         grade_level, section_name = parse_section(sheet.title)
+        # Reset per sheet, not per workbook: a sheet whose banners are missing must not
+        # inherit the previous section's last block and file its whole class as female.
+        sex: str | None = None
         for row in sheet.iter_rows(values_only=True):
-            parsed = parse_row(row, grade_level, section_name)
+            lrn, name = (cell(v) for v in _first_four(row)[:2])
+            if found := banner_sex(lrn, name):
+                sex = found
+                continue
+            parsed = parse_row(row, grade_level, section_name, sex)
             if isinstance(parsed, Candidate):
                 students.append(parsed)
             elif isinstance(parsed, Rejected):

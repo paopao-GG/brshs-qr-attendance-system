@@ -127,6 +127,28 @@ class RiskConfig:
 
 
 @dataclass(frozen=True)
+class Sf2Config:
+    """Header and signature fields on the DepEd SF2 that live nowhere else.
+
+    Everything else on the form is derived -- the section, the grade level, the days,
+    the counts. These four are institutional facts the database has no column for, and
+    guessing them would put an invented School ID on a document a principal signs.
+
+    Every field defaults to "", and "" is printed as a blank line rather than as a
+    placeholder: an unfilled SF2 is obviously unfinished, whereas one filled with
+    plausible-looking defaults is quietly wrong.
+    """
+
+    school_id: str = ""
+    school_year: str = ""
+    # The adviser named here wins over sections.adviser_id, because seed_demo seeds
+    # role placeholders ('Class Adviser') rather than people and a placeholder over a
+    # signature line reads as a real name.
+    adviser_name: str = ""
+    school_head_name: str = ""
+
+
+@dataclass(frozen=True)
 class Secrets:
     qr_secret: str = ""
     # Recipients allowed to receive a real text. EMPTY MEANS UNRESTRICTED, which is
@@ -150,6 +172,7 @@ class Config:
     camera: CameraConfig = field(default_factory=CameraConfig)
     screening: ScreeningConfig = field(default_factory=ScreeningConfig)
     gsm: GsmConfig = field(default_factory=GsmConfig)
+    sf2: Sf2Config = field(default_factory=Sf2Config)
     secrets: Secrets = field(default_factory=Secrets)
 
 
@@ -247,6 +270,10 @@ def load_config(path: Path | None = None) -> Config:
         gsm=GsmConfig(**{
             k: v for k, v in raw.get("gsm", {}).items()
             if k in GsmConfig.__dataclass_fields__
+        }),
+        sf2=Sf2Config(**{
+            k: v for k, v in raw.get("sf2", {}).items()
+            if k in Sf2Config.__dataclass_fields__
         }),
         secrets=Secrets(
             qr_secret=os.environ.get("TRACKIFY_QR_SECRET", ""),

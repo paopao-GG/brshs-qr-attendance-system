@@ -487,8 +487,9 @@ class RecordsPage(QWidget):
         self.btn_roster = self._button("Student roster", None, self._toggle_roster)
         self.btn_suspend = self._button("Class suspension", None, self._suspend)
         self.btn_password = self._button("Change password", None, self._change_password)
-        self.btn_export = self._button("Export XLSX", None, self._export,
-                                       kind="ToolbarPrimary")
+        self.btn_export = self._button("Export XLSX", None, self._export)
+        self.btn_sf2 = self._button("Export SF2", None, self._export_sf2,
+                                    kind="ToolbarPrimary")
         self.btn_analytics = self._button("Export analytics", None, self._export_analytics)
         self.btn_summaries = self._button("Send weekly summaries", None,
                                           self._send_summaries)
@@ -496,15 +497,15 @@ class RecordsPage(QWidget):
                                       kind="ToolbarQuiet")
         for button in (self.btn_log, self.btn_roster, self.btn_suspend,
                        self.btn_password, self.btn_summaries, self.btn_analytics,
-                       self.btn_export, self.btn_close):
+                       self.btn_export, self.btn_sf2, self.btn_close):
             bar.addWidget(button)
         root.addLayout(bar)
         # The attendance controls are meaningless over a roster; the roster carries its
         # own search and section filter. Held together so _show_view can hide them.
         self._attendance_controls = (self.month, self.year, self.btn_suspend,
-                                     self.btn_export, self.btn_analytics,
-                                     self.btn_summaries, self.btn_log,
-                                     self.section, self.section_label)
+                                     self.btn_export, self.btn_sf2,
+                                     self.btn_analytics, self.btn_summaries,
+                                     self.btn_log, self.section, self.section_label)
 
         # --- legend --------------------------------------------------------
         # The glyphs explain themselves here rather than in a manual nobody opens.
@@ -812,6 +813,53 @@ class RecordsPage(QWidget):
             QMessageBox.warning(self, "Export failed", str(exc))
             return
         self.status.setText(f"Exported to {written}")
+
+    def _export_sf2(self) -> None:
+        """The DepEd form itself, as against the SF2-shaped register above.
+
+        Kept separate from _export rather than replacing it. The register carries the
+        corrections shading, the P/L/A/E letters and the per-student rate, which is
+        what staff read to spot bad data; SF2 carries none of that by design, because
+        it is a submission and not a working document.
+        """
+        if self.section_id is None:
+            return
+        from ..core.config import load_config
+        from ..export import sf2 as sf2_export
+
+        config = self.config or load_config()
+        year, month = self.year.value(), self.month.currentData()
+        suggested = sf2_export.default_filename(self.section.currentText(), year, month)
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export SF2", suggested, "Excel workbook (*.xlsx)"
+        )
+        if not path:
+            return
+        try:
+            written = sf2_export.export_sf2(
+                self.conn, self.section_id, year, month, path,
+                config=config, school_name=self.school_name,
+            )
+        except sf2_export.Sf2Error as exc:
+            # Its messages name the fix, so they are worth showing verbatim rather
+            # than under a generic "export failed".
+            QMessageBox.warning(self, "Cannot build the SF2", str(exc))
+            return
+        except Exception as exc:            # noqa: BLE001 - a locked file is common
+            QMessageBox.warning(self, "Export failed", str(exc))
+            return
+
+        unrecorded = self.conn.execute(
+            "SELECT COUNT(*) FROM students "
+            "WHERE section_id = ? AND active = 1 AND sex IS NULL",
+            (self.section_id,),
+        ).fetchone()[0]
+        note = ""
+        if unrecorded:
+            note = (f" {unrecorded} student(s) have no sex recorded, so they are in a "
+                    "third block instead of the male and female ones. Set it in the "
+                    "student roster - the form is not a valid SF2 until you do.")
+        self.status.setText(f"SF2 exported to {written}.{note}")
 
     def _export_analytics(self) -> None:
         """The trend, risk, AHP and screening workbook.

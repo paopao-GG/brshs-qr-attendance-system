@@ -101,3 +101,15 @@ severity_1 = "Monitor"      # tool with a legitimate school use (scissors, compa
 severity_2 = "Monitor"      # other prohibited object
 severity_3 = "Elevated"     # pointed, not bladed
 severity_4 = "High"         # bladed, or blunt impact
+
+# DepEd School Form 2 (SF2), Daily Attendance Report of Learners. Everything else on
+# that form is derived from the database -- these four are institutional facts it has
+# no column for. Left blank, they print as blank lines for somebody to write on, which
+# is what an unfinished form should look like. See docs/personel-access.md.
+[sf2]
+school_id = "301814"
+school_year = "2026 - 2027"
+# Blank falls back to the section's adviser in the users table. Set it here when that
+# is still a role placeholder rather than a person.
+adviser_name = ""
+school_head_name = ""

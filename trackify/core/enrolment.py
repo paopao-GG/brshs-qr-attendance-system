@@ -34,7 +34,7 @@ from .mobile import InvalidMobile, normalise
 # Columns an import is allowed to write. Everything absent from this tuple is deliberate;
 # see the module docstring before adding to it.
 IMPORTABLE = ("lrn", "first_name", "last_name", "section_id",
-              "guardian_name", "guardian_mobile")
+              "guardian_name", "guardian_mobile", "sex")
 
 NEW = "new"
 UPDATED = "updated"
@@ -93,6 +93,24 @@ class ImportPlan:
         return [c for c in self.changes if c.breaks_the_card]
 
     @property
+    def sex_recorded(self) -> list[Change]:
+        """Students who will GAIN a sex -- not those who merely have one.
+
+        Worth its own line on the preview because it is invisible in the others: most
+        of the changes in a re-import of the office sheet are sex and nothing else, so
+        a screen that only says "updated" would not mention the one thing the import
+        was run for. A correction from M to F is an ordinary update; only None -> M or
+        None -> F is counted here.
+        """
+        def gains_one(change: Change) -> bool:
+            if change.kind == NEW:
+                return bool(change.candidate.sex)
+            before, after = change.fields.get("sex", (None, None))
+            return before is None and after is not None
+
+        return [c for c in self.changes if c.writes and gains_one(c)]
+
+    @property
     def writes(self) -> int:
         return sum(1 for c in self.changes if c.writes)
 
@@ -135,7 +153,11 @@ def match(candidate: roster.Candidate, by_lrn: dict, by_name: dict) -> sqlite3.R
 # Columns where an EMPTY cell in the spreadsheet means "no information", not "delete
 # what you have". Everything else -- a name, an LRN, a section -- is always filled in
 # for a candidate, so the distinction does not arise there.
-FILL_ONLY = ("guardian_name", "guardian_mobile")
+#
+# sex belongs here for the same reason as the guardian columns, one step removed: it
+# comes from a MALE/FEMALE banner, and a sheet where somebody deleted the banner rows
+# would otherwise blank a field staff had set in the roster screen.
+FILL_ONLY = ("guardian_name", "guardian_mobile", "sex")
 
 
 def _would_erase(column: str, current, incoming) -> bool:
@@ -193,6 +215,7 @@ def plan_import(
             "section_id": target_section,
             "guardian_name": candidate.guardian_name or None,
             "guardian_mobile": candidate.guardian_mobile,
+            "sex": candidate.sex,
         }
         fields = {
             column: (current[column], value)
@@ -259,13 +282,14 @@ def _insert(conn: sqlite3.Connection, candidate: roster.Candidate,
     cursor = conn.execute(
         """INSERT INTO students
            (lrn, first_name, last_name, section_id, guardian_name, guardian_mobile,
-            consent_on_file, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, 0, ?)""",
+            sex, consent_on_file, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)""",
         # consent_on_file = 0, always. A spreadsheet cannot record consent under
         # RA 10173, and queue.py checks this column before enqueueing anything, so a
         # student created here is unreachable by SMS until a person says otherwise.
         (candidate.lrn, candidate.first, candidate.last, section_id,
-         candidate.guardian_name or None, candidate.guardian_mobile, utcnow()),
+         candidate.guardian_name or None, candidate.guardian_mobile, candidate.sex,
+         utcnow()),
     )
     student_id = cursor.lastrowid
     audit(conn, "student.imported", entity_type="student", entity_id=student_id,
@@ -305,7 +329,8 @@ def _update(conn: sqlite3.Connection, change: Change,
 # --- single-student edits ---------------------------------------------------
 
 EDITABLE = ("first_name", "last_name", "lrn", "section_id",
-            "guardian_name", "guardian_mobile", "consent_on_file", "notify_optin")
+            "guardian_name", "guardian_mobile", "sex", "consent_on_file",
+            "notify_optin")
 
 
 def update_student(conn: sqlite3.Connection, student_id: int, *,
@@ -331,6 +356,15 @@ def update_student(conn: sqlite3.Connection, student_id: int, *,
             fields["guardian_mobile"] = normalise(fields["guardian_mobile"])
         except InvalidMobile as exc:
             raise EnrolmentError(str(exc)) from exc
+
+    if "sex" in fields:
+        # "" from an unset combo box means "not recorded", which is a legitimate state
+        # and must reach the column as NULL rather than as an empty string the CHECK
+        # would reject.
+        value = (fields["sex"] or "").strip().upper() or None
+        if value not in (None, "M", "F"):
+            raise EnrolmentError(f"sex must be M, F, or blank - not {fields['sex']!r}.")
+        fields["sex"] = value
 
     for column in ("first_name", "last_name", "lrn"):
         if column in fields and not str(fields[column] or "").strip():

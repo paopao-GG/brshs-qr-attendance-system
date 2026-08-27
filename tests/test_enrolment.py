@@ -15,10 +15,10 @@ from trackify.core.enrolment import LRN_CHANGED, NEW, UNCHANGED, UPDATED, Enrolm
 
 def candidate(lrn="111995150037", last="Almuena", first="Jan Adriel M.",
               guardian="Almuena, Edith M.", mobile="639478179371",
-              grade=11, section="Initiative"):
+              grade=11, section="Initiative", sex=None):
     return roster.Candidate(
         lrn=lrn, first=first, last=last, section_name=section, grade_level=grade,
-        guardian_name=guardian, guardian_mobile=mobile,
+        guardian_name=guardian, guardian_mobile=mobile, sex=sex,
     )
 
 
@@ -408,3 +408,116 @@ def test_a_name_is_never_treated_as_fill_only(conn, enrolled):
     enrolment.apply_import(conn, plan, actor_name="T. San Jose")
 
     assert students(conn)[0]["first_name"] == "Jan Adriel"
+
+
+# --- sex, which only the MALE/FEMALE banners carry ---------------------------
+
+def test_an_import_fills_in_the_sex_it_read(conn, enrolled):
+    enrolled(candidate(sex="F"))
+    assert students(conn)[0]["sex"] == "F"
+
+
+def test_an_import_may_not_blank_a_sex_somebody_set(conn, enrolled):
+    """Same rule as the guardian columns. A sheet whose banner rows were deleted would
+    otherwise undo an afternoon of work in the roster screen, silently."""
+    enrolled(candidate(sex="M"))
+    student = students(conn)[0]["id"]
+
+    plan = enrolment.plan_import(conn, [candidate(sex=None)])
+    enrolment.apply_import(conn, plan, actor_name="T. San Jose")
+
+    assert conn.execute("SELECT sex FROM students WHERE id = ?",
+                        (student,)).fetchone()["sex"] == "M"
+
+
+def test_an_import_may_correct_a_sex(conn, enrolled):
+    """Filling a blank is not the same as clearing one, and neither is a correction --
+    a student who moved blocks in the office sheet moves here too."""
+    enrolled(candidate(sex="M"))
+    plan = enrolment.plan_import(conn, [candidate(sex="F")])
+    enrolment.apply_import(conn, plan, actor_name="T. San Jose")
+
+    assert students(conn)[0]["sex"] == "F"
+
+
+def test_the_roster_screen_may_set_a_sex(conn, enrolled):
+    enrolled(candidate())
+    student = students(conn)[0]["id"]
+
+    changed = enrolment.update_student(conn, student, sex="F",
+                                       actor_name="T. San Jose", reason="office record")
+    assert changed == {"sex": "F"}
+
+
+def test_the_roster_screen_may_clear_a_sex(conn, enrolled):
+    """An empty combo box means "not recorded", which is a real state. It has to reach
+    the column as NULL rather than as '' -- the CHECK constraint rejects ''."""
+    enrolled(candidate(sex="M"))
+    student = students(conn)[0]["id"]
+
+    enrolment.update_student(conn, student, sex="",
+                             actor_name="T. San Jose", reason="entered in error")
+    assert conn.execute("SELECT sex FROM students WHERE id = ?",
+                        (student,)).fetchone()["sex"] is None
+
+
+def test_a_sex_that_is_neither_m_nor_f_is_refused(conn, enrolled):
+    enrolled(candidate())
+    student = students(conn)[0]["id"]
+
+    with pytest.raises(EnrolmentError, match="M, F, or blank"):
+        enrolment.update_student(conn, student, sex="Male",
+                                 actor_name="T. San Jose", reason="typo")
+
+
+# --- what the preview counts -------------------------------------------------
+
+def test_a_student_gaining_a_sex_is_counted(conn, enrolled):
+    """Re-importing the office sheet after students.sex existed makes almost every row
+    an 'Updated' whose only change is sex. Without its own count the preview would not
+    mention the one thing the import was run for."""
+    enrolled(candidate())
+    plan = enrolment.plan_import(conn, [candidate(sex="F")])
+
+    assert len(plan.sex_recorded) == 1
+    assert plan.counts[UPDATED] == 1
+
+
+def test_a_student_who_already_had_one_is_not_counted(conn, enrolled):
+    """The line says how many are GAINING a sex, not how many have one."""
+    enrolled(candidate(sex="F"))
+    plan = enrolment.plan_import(conn, [candidate(sex="F")])
+
+    assert plan.sex_recorded == []
+
+
+def test_a_correction_is_an_ordinary_update_not_a_gain(conn, enrolled):
+    enrolled(candidate(sex="M"))
+    plan = enrolment.plan_import(conn, [candidate(sex="F")])
+
+    assert plan.sex_recorded == []
+    assert plan.counts[UPDATED] == 1
+
+
+def test_a_new_student_carrying_a_sex_is_counted(conn):
+    plan = enrolment.plan_import(conn, [candidate(sex="M")])
+
+    assert len(plan.sex_recorded) == 1
+    assert plan.counts[NEW] == 1
+
+
+def test_a_new_student_without_one_is_not(conn):
+    plan = enrolment.plan_import(conn, [candidate(sex=None)])
+
+    assert plan.sex_recorded == []
+    assert plan.counts[NEW] == 1
+
+
+def test_an_unchanged_student_is_never_counted(conn, enrolled):
+    """UNCHANGED rows do not write, so nothing about them belongs in a count of what
+    the import is about to do."""
+    enrolled(candidate(sex="F"))
+    plan = enrolment.plan_import(conn, [candidate(sex="F")])
+
+    assert plan.counts[UNCHANGED] == 1
+    assert plan.sex_recorded == []

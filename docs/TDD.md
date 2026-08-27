@@ -104,7 +104,7 @@ transactions.
 
 | Table | Holds |
 |---|---|
-| `students`, `sections`, `users` | Roster, class groups, staff accounts |
+| `students`, `sections`, `users` | Roster, class groups, staff accounts. `students.sex` is nullable — DepEd SF2 needs it, a student without one must still enrol and scan |
 | `school_days` | Per-date thresholds, **frozen on first use** |
 | `scan_events` | Append-only record of every card presented |
 | `attendance_days` | One live row per student per date |
@@ -187,8 +187,9 @@ as a blank box, and the gate cannot afford an unreadable button.
 `trend.py` (OLS on daily rates, Durbin–Watson), `risk.py` (pooled logistic model, composite,
 bands, incident floor), `ahp.py` (weights and the consistency check), `screening.py`
 (descriptive counts). Read-only over the database except `risk.compute(persist=True)`.
-`export/xlsx.py` writes the SF2-shaped register; `export/analytics.py` writes the six-sheet
-workbook.
+`export/xlsx.py` writes the SF2-*shaped* working register (letters, corrections shading, a
+per-student rate); `export/sf2.py` writes the DepEd form itself, to the geometry of the LIS
+workbook the school submits; `export/analytics.py` writes the six-sheet workbook.
 
 ### Dependency direction
 
@@ -263,7 +264,20 @@ double cost on every retry is worse than failing once in the queue.
 ### Exports
 
 `export_register(conn, section_id, year, month, path)` — one section, one calendar month,
-SF2-shaped, weekends tinted, corrected cells highlighted.
+SF2-shaped, weekends tinted, corrected cells highlighted. The **working** register.
+
+`export_sf2(conn, section_id, year, month, path, config=..., school_name=...)` — the DepEd
+School Form 2, built rather than filled from a template: the school's own file has 17 male and
+22 female rows baked into its merges, and inserting rows for a class of 41 tears every merge and
+border below them. 47 columns, 25 day slots, a male block above a female block, summary panel,
+two signature lines.
+
+Its codes are the form's, and they are not the register's — blank for present, `x` for absent, a
+shaded cell for tardy. An excused day is **blank and named in REMARKS**, following TRACKIFY's own
+rule that it leaves the rate denominator rather than counting against a student; marking it `x`
+would contradict the register produced from the same database. A month with more than 25 class
+days raises `Sf2Error` rather than dropping a column, and a student with no `sex` recorded goes
+into a visible third block rather than being silently omitted.
 `export_analytics(conn, config, path, section_id=..., ...)` — six sheets; every sheet is written
 even when it cannot be computed, stating what is missing and how much is needed. A missing sheet
 reads as a crash and a zero reads as a finding.
@@ -294,7 +308,7 @@ optional sections are merged over defaults so an older `config.toml` still loads
 ```bash
 python -m venv .venv && .venv/Scripts/pip install -r requirements-dev.txt
 cp .env.example .env          # then set TRACKIFY_QR_SECRET
-python scripts/seed_demo.py   # imports student-info.xlsx
+python scripts/seed_demo.py   # imports data/student-list.xlsx
 python app.py --windowed --provider console
 ```
 

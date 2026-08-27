@@ -7,7 +7,11 @@
 # (this line was commented out) and reached a public GitHub repo; the history has
 # since been rewritten to remove it. It must stay in the working tree -- seed_demo.py
 # reads it -- but it must never be committed again.
+#
+# It now lives at data/student-list.xlsx, covered by the data/ rule below. This line
+# stays so that dropping a copy back in the repo root cannot re-expose it.
 student-info.xlsx
+student-list.xlsx
 
 # Register exports. The Export dialog defaults to the repo root, and accepting that
 # default once put a file of real student names into a commit.
