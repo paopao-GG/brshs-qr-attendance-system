@@ -15,7 +15,12 @@
  * readable across a corridor. */
 QWidget {
     color: #E6EDEA;
-    font-family: "Segoe UI", "IBM Plex Sans", system-ui, sans-serif;
+    /* Segoe UI is Windows-only and IBM Plex is not installed on either machine, so on
+     * the Pi both fell through to whatever fontconfig picked. Nunito Sans is Raspberry
+     * Pi OS's own UI font and DejaVu Sans is always present, so the kiosk now renders
+     * in a chosen face on both platforms rather than a different guess on each. */
+    font-family: "Segoe UI", "Nunito Sans", "DejaVu Sans", "IBM Plex Sans",
+                 system-ui, sans-serif;
     font-size: 15px;
 }
 

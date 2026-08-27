@@ -1,0 +1,57 @@
+# Exact dependency set verified on the deployment Pi. Generated with pip freeze.
+#
+#   Raspberry Pi 5 · Debian 13 (trixie) · aarch64 · glibc 2.41 · CPython 3.13.5
+#   780 tests passing, ruff clean, on 2026-08-27.
+#
+# requirements.txt declares INTENT with lower bounds; this file records what was
+# actually verified. Rebuild the gate station from this file, not from the floors --
+# a kiosk that has to be reinstalled on the morning of the fair must get back the set
+# that was tested, not whatever PyPI resolves to that day.
+#
+# This is the runtime AND dev-tooling set: frozen from requirements-dev.txt, so pytest,
+# pytest-qt and ruff are pinned here too. That is deliberate, not leakage. TDD.md section 8
+# makes running the suite part of deploying to the Pi, and a station rebuilt from a dead SD
+# card has to be able to prove itself before it opens a gate -- which it cannot do if the
+# only thing installed is the code under test.
+#
+#   python3 -m venv .venv && .venv/bin/pip install -r requirements.lock
+#
+# Regenerate after any deliberate upgrade, and only once the suite is green again.
+
+argon2-cffi==25.1.0
+argon2-cffi-bindings==26.1.0
+cffi==2.1.1
+et_xmlfile==2.0.0
+formulaic==1.2.2
+iniconfig==2.3.0
+interface_meta==2.0.1
+joblib==1.5.3
+narwhals==2.25.0
+numpy==2.5.2
+openpyxl==3.1.5
+packaging==26.3
+pandas==3.0.5
+patsy==1.0.2
+pillow==12.3.0
+pluggy==1.6.0
+pycparser==3.0
+Pygments==2.21.0
+pyserial==3.5
+PySide6==6.11.2
+PySide6_Addons==6.11.2
+PySide6_Essentials==6.11.2
+pytest==9.1.1
+pytest-qt==4.5.0
+python-dateutil==2.9.0.post0
+qrcode==8.2
+QtPy==2.4.3
+ruff==0.16.4
+scikit-learn==1.9.0
+scipy==1.18.1
+shiboken6==6.11.2
+six==1.17.0
+statsmodels==0.15.0
+threadpoolctl==3.6.0
+typing_extensions==4.16.0
+wrapt==2.3.0
+zxing-cpp==3.1.1

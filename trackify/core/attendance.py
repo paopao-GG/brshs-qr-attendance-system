@@ -72,9 +72,23 @@ class ScanResult:
 
 
 def fmt_time(at: datetime) -> str:
-    """12-hour time without a leading zero. %-I is not portable to Windows."""
-    text = at.strftime("%I:%M %p")
-    return text[1:] if text.startswith("0") else text
+    """12-hour time without a leading zero, e.g. "7:00 AM".
+
+    Assembled from the fields rather than strftime, because neither half of that format
+    is portable. %-I strips the leading zero on Linux and is rejected on Windows -- and
+    %p is not portable across LOCALES, which is the one that actually bit us.
+
+    Qt calls setlocale(LC_ALL, "") when QApplication is constructed, so the process
+    leaves the C locale the moment the kiosk starts. Under the Pi's default en_GB the
+    glibc am_pm strings are lower case, and the same code that printed "arrived 3:00 PM"
+    on Windows started printing "arrived 3:00 pm" -- inside a text message to a parent.
+    Other locales define am_pm as empty, which would drop the meridiem from an arrival
+    time altogether and leave "arrived 3:00" genuinely ambiguous.
+
+    The wording of a guardian notification must not depend on $LANG.
+    """
+    hour = at.hour % 12 or 12
+    return f"{hour}:{at.minute:02d} {'AM' if at.hour < 12 else 'PM'}"
 
 
 def _last_scan(conn: sqlite3.Connection, student_id: int, day: str) -> sqlite3.Row | None:

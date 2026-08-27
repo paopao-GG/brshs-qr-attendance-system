@@ -315,6 +315,32 @@ idle. **Framing time is.** A student has to hold a card still in front of a lens
 a scanner reads a card waved past it. For a study of 200 students that difference
 compounds at the gate, so budget for a scanner before a full-school deployment.
 
+**If the camera enumerates but no `/dev/video*` node appears.** This cost an afternoon on the
+deployment Pi, and it looks exactly like a software fault from inside the application --
+`check_camera.py --list` simply reports no cameras. It is not. Check `dmesg | grep uvc`:
+
+```
+uvcvideo 3-1:1.0: Found UVC 1.00 device Web Camera (5843:d527)
+uvcvideo 3-1:1.1: Failed to query (GET_CUR) UVC probe control : -71 (exp. 26)
+uvcvideo 3-1:1.1: Failed to initialize the device (-71)
+uvcvideo 3-1:1.0: probe with driver uvcvideo failed with error -71
+```
+
+`-71` is EPROTO on a USB control transfer. The device is alive on the bus -- `lsusb` lists it,
+and on a camera with a microphone the *audio* interfaces bind normally, which is what makes it
+look like a driver bug rather than a wiring one. It is signal integrity or power. **Moving the
+camera to a different USB port fixed it outright**; a different cable or a powered hub is the
+next thing to try, and §5 "Power and storage" above is the underlying reason. `dmesg | grep uvc`
+after each attempt tells you immediately whether it bound, without launching anything.
+
+**Frame rate is part of the format choice, not just resolution.** The gate camera offers
+1280x720 as MJPEG at 30 fps and as uncompressed YUYV at *5*. `choose_format` used to prefer
+uncompressed unconditionally, to avoid JPEG-decoding every frame -- and so took the 5 fps mode,
+which is below the configured `decode_fps` of 10 and makes the preview a student aims at
+visibly choppy. It now only prefers uncompressed among formats that can sustain `decode_fps`.
+Paying a few ms of JPEG decode on ten frames a second is nothing on a Pi 5; six times the frame
+rate at the gate is not.
+
 Three things decide whether a webcam works at all:
 
 | Concern | Requirement |

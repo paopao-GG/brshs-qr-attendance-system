@@ -128,6 +128,34 @@ def test_choose_format_avoids_mjpeg_at_the_same_resolution():
     assert not is_compressed(choose_format(device, 1280, 720))
 
 
+def test_choose_format_takes_mjpeg_over_a_frame_rate_the_decoder_cannot_use():
+    """The real gate camera, which is why min_fps exists.
+
+    The SunplusIT unit offers 1280x720 as MJPEG at 30 fps and as YUYV at 5. Preferring
+    uncompressed took the 5 fps mode -- half the configured decode rate, and a preview
+    too choppy to aim a card at. Paying for the JPEG decode is the better trade.
+    """
+    device = FakeDevice("x")
+    device.videoFormats = lambda: [
+        FakeFormat(1280, 720, 30, "Format_Jpeg"),
+        FakeFormat(1280, 720, 5, "Format_YUYV"),
+    ]
+    chosen = choose_format(device, 1280, 720, min_fps=10)
+    assert is_compressed(chosen)
+    assert chosen.maxFrameRate() == 30
+
+
+def test_choose_format_still_prefers_uncompressed_when_both_are_fast_enough():
+    """min_fps is a floor, not a reversal: it only breaks the tie when one side is
+    genuinely too slow to decode at."""
+    device = FakeDevice("x")
+    device.videoFormats = lambda: [
+        FakeFormat(1280, 720, 30, "Format_Jpeg"),
+        FakeFormat(1280, 720, 15, "Format_NV12"),
+    ]
+    assert not is_compressed(choose_format(device, 1280, 720, min_fps=10))
+
+
 def test_choose_format_takes_mjpeg_over_a_worse_resolution():
     """Resolution decides whether a small code resolves at all; it wins."""
     device = FakeDevice("x")

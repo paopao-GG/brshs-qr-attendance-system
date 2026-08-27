@@ -3,7 +3,11 @@
 
 [tool.ruff]
 line-length = 90          # matches the prevailing style; not 79, not 120
-target-version = "py311"  # the Pi ships 3.11; do not let 3.13-only syntax in
+# The MINIMUM Python this code must run on, not the newest it runs on. The deployment
+# Pi 5 (Debian 13 trixie) actually ships 3.13.5 -- an earlier note here claimed 3.11 and
+# was wrong -- but the floor stays at 3.11 so ruff never rewrites the source into syntax
+# the Windows development machine cannot run. Raise it only when every machine has.
+target-version = "py311"
 # qr-generator is a separate PyInstaller tool with its own lifecycle; it is not
 # part of the trackify package and is not gated on this config.
 extend-exclude = [".venv", "qr-generator"]

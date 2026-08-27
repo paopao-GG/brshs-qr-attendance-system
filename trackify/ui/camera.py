@@ -97,12 +97,26 @@ def is_compressed(fmt) -> bool:
     return name == "Format_Jpeg"
 
 
-def choose_format(device, width: int, height: int):
+def choose_format(device, width: int, height: int, min_fps: float = 0):
     """The supported format closest to the requested resolution.
 
-    Resolution first, then uncompressed over MJPEG, then frame rate. Resolution leads
-    because it decides whether a small printed code resolves at all; the rest is
-    efficiency.
+    Resolution first, then fast enough to decode at, then uncompressed over MJPEG, then
+    frame rate. Resolution leads because it decides whether a small printed code resolves
+    at all; the rest is efficiency.
+
+    `min_fps` is the frame rate the decoder is configured to want. It exists because
+    preferring uncompressed unconditionally was wrong on the gate camera: the SunplusIT
+    unit on the Pi offers 1280x720 as MJPEG at 30 fps and as YUYV at *5*, and the old
+    ranking took the 5 fps mode. That is half the configured decode rate, so the gate
+    got fewer chances to read each card -- and it made the preview a student aims at
+    visibly choppy, which costs framing time, the thing docs/hardware.md section 5
+    identifies as the real throughput bottleneck.
+
+    Saving the JPEG decode is not worth six times the frame rate. Frames are dropped
+    rather than queued and only decode_fps of them are ever looked at, so the cost is
+    bounded at a few ms on a handful of frames a second -- which a Pi 5 has in
+    abundance. When both candidates clear min_fps this still prefers uncompressed,
+    exactly as before.
     """
     formats = list(device.videoFormats())
     if not formats:
@@ -112,6 +126,7 @@ def choose_format(device, width: int, height: int):
         size = fmt.resolution()
         return (
             abs(size.width() - width) + abs(size.height() - height),
+            fmt.maxFrameRate() < min_fps,
             is_compressed(fmt),
             -fmt.maxFrameRate(),
         )
@@ -324,7 +339,8 @@ class CameraPanel(QWidget):
         self._stack.setCurrentWidget(self._view)
 
         self._camera = QCamera(device)
-        fmt = choose_format(device, self.config.width, self.config.height)
+        fmt = choose_format(device, self.config.width, self.config.height,
+                            self.config.decode_fps)
         if fmt is not None:
             self._camera.setCameraFormat(fmt)
         self._camera.errorOccurred.connect(self._on_camera_error)

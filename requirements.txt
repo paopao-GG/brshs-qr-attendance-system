@@ -26,3 +26,10 @@ openpyxl>=3.1
 
 # Security
 argon2-cffi>=23.1
+
+# Transitive, pinned deliberately. statsmodels 0.15 pulls in formulaic, which declares
+# `wrapt>=1.17.0rc1` on Python 3.13 -- and because that specifier NAMES a pre-release,
+# PEP 440 makes every pre-release eligible for it. pip then resolved the newest match
+# overall, wrapt 2.4.0rc5, in preference to stable 2.3.0. A release candidate is not
+# what a school gate station should be running; stable satisfies the constraint fine.
+wrapt>=2.3.0,<3

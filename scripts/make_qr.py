@@ -24,6 +24,40 @@ CELL_W, CELL_H = 620, 460
 QR_PX = 300
 
 
+# Label fonts for the printed sheet, in preference order. arial.ttf resolves on Windows
+# and nowhere else: on the Pi it raised OSError every time and fell through to
+# ImageFont.load_default(), which is a small bitmap face. The QR codes still scanned, but
+# the student name and payload printed under each one came out barely legible -- on the
+# cards a person has to read to hand the right one to the right child.
+LABEL_FONTS = (
+    "arial.ttf",                                            # Windows
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",      # Debian / Raspberry Pi OS
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "DejaVuSans.ttf",                                       # anywhere on the font path
+)
+
+
+def _label_fonts():
+    """(name_font, meta_font) -- the first family that loads, at 30px and 22px.
+
+    Pillow is imported here rather than at module scope so that --list-only keeps
+    working on a machine without it, which is the whole reason main() imports it late.
+    """
+    from PIL import ImageFont
+
+    for candidate in LABEL_FONTS:
+        try:
+            return (ImageFont.truetype(candidate, 30),
+                    ImageFont.truetype(candidate, 22))
+        except OSError:
+            continue
+    # Legible enough to prove the pipeline works, small enough to notice. Say so rather
+    # than silently printing an unreadable sheet.
+    print("\nNo scalable font found; card labels will be small. Install fonts-dejavu.",
+          file=sys.stderr)
+    return ImageFont.load_default(), ImageFont.load_default()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--list-only", action="store_true")
@@ -71,17 +105,13 @@ def main() -> int:
 
     try:
         import qrcode
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image, ImageDraw
     except ImportError:
         print("\nqrcode/Pillow not installed; skipping image sheet.", file=sys.stderr)
         return 0
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        name_font = ImageFont.truetype("arial.ttf", 30)
-        meta_font = ImageFont.truetype("arial.ttf", 22)
-    except OSError:
-        name_font = meta_font = ImageFont.load_default()
+    name_font, meta_font = _label_fonts()
 
     pages, per_page = [], COLS * ROWS
     for start in range(0, len(students), per_page):

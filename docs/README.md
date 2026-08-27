@@ -69,8 +69,8 @@ Stated in full in [flow.md](flow.md) §2. In short:
 
 ## Status
 
-**Built and under test.** 44 modules, ~11,500 lines, **742 passing tests** across 34 test
-modules. The full entry flow, screening, custody chain, records screen with corrections, roster
+**Built and under test.** 44 modules, ~11,500 lines, **780 passing tests** across 34 test
+modules, green on the deployment Pi as well as on Windows. The full entry flow, screening, custody chain, records screen with corrections, roster
 import, SMS queue over a live SIM800C, analytics and all three exports are implemented and
 exercised.
 
@@ -86,7 +86,7 @@ module to a live handset.
 | Analytics (trend, risk, AHP, screening) and the workbook | Working |
 | Weekly summary and absence reminder SMS | Working |
 | Adviser dashboard, per-user logins | **Not built** — one shared password gates the records screen; see [personel-access.md](personel-access.md) §3 |
-| Raspberry Pi deployment | **Not done** — developed and tested on Windows |
+| Raspberry Pi deployment | **Done** — running on the Pi 5 gate station: 780 tests green on-device, kiosk and custody desk verified fullscreen under labwc/Wayland, camera live, autostart armed. SMS not yet exercised on the Pi (see below) |
 
 ### The attendance data is simulated
 
@@ -98,14 +98,31 @@ have something to render, and the script prints that warning every time it runs.
 R², the AUC and the band distribution are all outputs of a simulator. Clear the range with
 `python scripts/simulate_term.py --clear` before the real pilot.
 
+The **Pi's** database has never been simulated into: it was seeded from the office sheet
+and nothing else, so `scan_events`, `attendance_days` and `notifications` are all empty. If
+you run the simulator on the station to demonstrate the exports, clear it again before the
+pilot starts.
+
 ### Remaining before the pilot
 
-1. **Re-import `data/student-list.xlsx` from the roster screen.** The sex backfill was applied
-   on its own, so the database is knowingly behind the office sheet by **6 students who were
-   never created and 1 LRN that is still wrong**. The full import closes both — and will warn
-   that the corrected LRN means one printed card must be reprinted
+1. ~~Re-import `data/student-list.xlsx` from the roster screen.~~ — closed by the Pi bring-up.
+   The station's database was seeded fresh from the current office sheet (`seed_demo.py
+   --reset`): **110 students across 3 sections, every one classified M or F**, so the SF2 export
+   has what it needs. 15 rows were skipped and 30 students have no guardian number on file —
+   both reported in `data/seed-report.txt` and fixable from the roster screen. The corrected LRN
+   still means one printed card must be reprinted
 2. Apply the Priority 1 fixes in [research-plan-review.md](research-plan-review.md) to the .docx
-3. Collect signed consent — `consent_on_file` is 1 for a single student, so the SMS queue
-   currently refuses 102 of 103 sends
-4. Deploy to the Pi 5 and run the kiosk from it
+3. Collect signed consent — `consent_on_file` is 1 for a single student (the synthetic demo
+   row), so the SMS queue refuses every one of the 110 imported students. Correct behaviour, not
+   a fault: a silent queue on the Pi is the consent gate working
+4. ~~Deploy to the Pi 5 and run the kiosk from it~~ — done. The real `TRACKIFY_QR_SECRET` is
+   now in `.env` on the station, so printed cards verify. One thing still open: **reconnect the
+   SIM800C**, which came off the bus during camera bring-up (its re-enumeration failed with
+   `usb usb1-port1: Cannot enable. Maybe the USB cable is bad?` — try another port or cable, as
+   with the camera) and has not been re-checked with `scripts/test_sms.py --check`. Until then
+   leave the kiosk on `--provider console`
+
+   The station also has a desktop launcher, **TRACKIFY Scan Station**, for reopening the kiosk
+   after someone presses Escape. It starts the same systemd unit the boot autostart does, so it
+   cannot bring up a second instance. See [TDD.md](TDD.md) §8
 5. One-week pilot on a single section before the 20-day run

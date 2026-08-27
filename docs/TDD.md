@@ -305,12 +305,61 @@ optional sections are merged over defaults so an older `config.toml` still loads
 
 ## 8. Deployment
 
+Windows, for development:
+
 ```bash
 python -m venv .venv && .venv/Scripts/pip install -r requirements-dev.txt
 cp .env.example .env          # then set TRACKIFY_QR_SECRET
 python scripts/seed_demo.py   # imports data/student-list.xlsx
 python app.py --windowed --provider console
 ```
+
+**Raspberry Pi 5 (the gate station).** Debian 13 trixie marks its system Python
+`EXTERNALLY-MANAGED`, so the venv is mandatory rather than tidy -- `pip install` outside one
+is refused. Install from `requirements.lock`, not from `requirements.txt`: the lock is the
+exact set verified on the Pi, and the floors in requirements.txt now resolve to major-version
+jumps (zxing-cpp 2 -> 3, qrcode 7 -> 8, pytest 8 -> 9) that nobody has tested that morning.
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements.lock
+cp .env.example .env          # then set TRACKIFY_QR_SECRET
+.venv/bin/python scripts/seed_demo.py --reset
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q    # expect green before going further
+.venv/bin/python app.py --windowed --provider console
+```
+
+Verified on Raspberry Pi 5 (4 GB), Debian 13 trixie, aarch64, glibc 2.41, CPython 3.13.5,
+labwc/Wayland. PySide6 6.11's aarch64 wheel needs glibc >= 2.39, which trixie satisfies; Qt
+runs on the Wayland platform plugin with no `QT_QPA_PLATFORM` override, and QtMultimedia uses
+the FFmpeg backend bundled in the wheel. No apt packages beyond a stock desktop image.
+
+**Autostart at the gate.** Two files, and the split is deliberate:
+
+- `~/.config/systemd/user/trackify-kiosk.service` -- journald logging
+  (`journalctl --user -u trackify-kiosk -f`), operator control (`systemctl --user restart
+  trackify-kiosk`), and `Restart=on-failure`. On-failure and *not* always: Escape closes the
+  kiosk and exits 0, and `Restart=always` would relaunch it instantly, leaving staff with no
+  way out of a frameless fullscreen window.
+- `~/.config/labwc/autostart` -- runs `systemctl --user start trackify-kiosk.service` once the
+  compositor is up. The unit is deliberately **not** `systemctl --user enable`d:
+  `graphical-session.target` is not active in this user manager on Raspberry Pi OS, and
+  `default.target` fires before `WAYLAND_DISPLAY` exists.
+
+  A user `autostart` **replaces** `/etc/xdg/labwc/autostart` rather than extending it, so that
+  file must keep the system's own four lines (`pcmanfm-pi`, `wf-panel-pi`, `kanshi`,
+  `lxsession-xdg-autostart`) or the desktop loses its panel and file manager.
+
+**Reopening it by hand.** Escape closes the kiosk -- deliberately, so nobody is trapped in a
+frameless fullscreen window -- and the way back is the **TRACKIFY Scan Station** desktop icon
+(`~/Desktop/trackify-kiosk.desktop`, also in the application menu). It runs
+`~/.local/bin/trackify-kiosk`, which is `systemctl --user start trackify-kiosk.service` preceded
+by a `reset-failed` to clear a `StartLimitBurst` lockout.
+
+Starting the *unit* rather than `app.py` is the point: clicking twice cannot bring up two kiosks
+contending for the camera and the same SQLite WAL, and the icon and a cold boot then take an
+identical path. The icon is generated into `~/.local/share/icons/` rather than committed --
+[ui/icons.py](../trackify/ui/icons.py) rules out image assets in the repo, and that reasoning
+holds for in-app icons; launcher chrome degrades to a generic glyph, not a blank button.
 
 **Providers.** `console` (prints, the default), `null` (counts, for a pilot), `gsm` (real).
 Console and null never spend load and never text a real parent, which is what makes it safe to
