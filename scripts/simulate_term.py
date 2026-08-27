@@ -50,7 +50,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from trackify.core import custody, db, screening
-from trackify.core.attendance import Outcome, close_open_days, record_scan
+from trackify.core.attendance import close_open_days, record_scan
 from trackify.core.config import load_config
 from trackify.core.screening import Outcome as ScreeningOutcome
 from trackify.core.service import ScanService
@@ -551,7 +551,7 @@ def main(argv=None) -> int:
     print("  It exists to exercise the exports and the UI. The trend, the p-value,")
     print("  the R squared and the AUC it produces are NOT measurements and must")
     print("  not be reported as findings.")
-    print(f"  Undo with: python scripts/simulate_term.py --clear")
+    print("  Undo with: python scripts/simulate_term.py --clear")
     print("=" * 74)
     print(f"\n  {len(days)} school days, {args.start} .. {args.end}, seed {args.seed}")
 

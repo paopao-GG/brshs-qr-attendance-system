@@ -23,6 +23,8 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 
+from ..core import corrections
+
 # Below this a line cannot be fitted with any residual degrees of freedom: OLS needs
 # n - 2 >= 1 for a confidence interval on the slope.
 MIN_DAYS = 3
@@ -33,12 +35,10 @@ LOW_POWER_BELOW = 10
 # which the independence assumption is doing visible work.
 DW_OK = (1.5, 2.5)
 
-# Statuses that count as attending. Online participation counts as present, per
-# analytics-model.md section 1 and corrections.TYPE_STATUS.
-PRESENT = ("present", "late", "online")
-# Excused days leave the DENOMINATOR rather than counting as absent -- the same rule the
-# register and the XLSX export already apply.
-COUNTED = PRESENT + ("absent",)
+# One definition, in core. An excused day is not a day the student failed to attend, so
+# it leaves the denominator -- see corrections.NON_OPPORTUNITY.
+PRESENT = corrections.PRESENT_STATUSES
+COUNTED = corrections.COUNTED_STATUSES
 
 
 @dataclass(frozen=True)

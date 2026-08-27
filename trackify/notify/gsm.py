@@ -30,6 +30,7 @@ What a serial modem changes, and none of it is cosmetic:
 
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import dataclass
 
@@ -246,10 +247,11 @@ class GsmProvider(NotificationProvider):
 
     def close(self) -> None:
         if self._serial is not None:
-            try:
+            # Best effort. close() is what a mid-send brownout calls, so the port may
+            # already be gone; failing to close a port that no longer exists must not
+            # stop the rest of this teardown.
+            with contextlib.suppress(Exception):
                 self._serial.close()
-            except Exception:
-                pass
             self._serial = None
             self._health = None
             # A cached "available" would outlive the port it described -- close() is
@@ -415,7 +417,7 @@ class GsmProvider(NotificationProvider):
             # rather than GsmError because a status is never worth a crash: this runs
             # on the worker thread with the whole queue behind it.
             self._open()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - a status check is never worth a crash
             self._last_result = Availability(ok=False, reason=str(exc))
         else:
             self._last_result = Availability(ok=True)
@@ -465,7 +467,7 @@ class GsmProvider(NotificationProvider):
                 self.send_timeout,
             ).decode("utf8", "replace")
 
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - any mid-send failure is ambiguous, see below
             # The port vanished mid-send: almost always a brownout reset. The message may
             # have been submitted first, so this must not be auto-retried.
             self.close()
@@ -495,7 +497,7 @@ class GsmProvider(NotificationProvider):
         try:
             self._write(ESC)
             self._read_until((b"OK\r\n", b"ERROR\r\n"), 2.0)
-        except Exception:
+        except Exception:  # noqa: BLE001 - best-effort escape; close() is the fallback
             self.close()
 
     def scan_networks(self) -> list[tuple[str, str]]:

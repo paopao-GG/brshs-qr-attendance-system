@@ -28,7 +28,12 @@ from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from .db import utcnow
 
 PASSWORD_KEY = "records_password_hash"
-MIN_LENGTH = 4
+
+# Eight, not four. This guards the roster, every correction, and 124 minors' attendance
+# records, and the lockout below is in-process only -- anyone who can restart the
+# application gets a fresh five attempts. Four characters is a long afternoon's work
+# against that; eight is not.
+MIN_LENGTH = 8
 
 # Deters a student who finds an unattended keyboard. It does NOT stop someone who can
 # restart the application -- the counter lives in this process only. Persisting it
@@ -72,7 +77,7 @@ def set_password(
     Changing requires the current one. Without that check, anyone who walked up to an
     already-unlocked screen could lock the real staff out of their own records.
     """
-    from .db import audit          # local import: db imports nothing from here
+    from .db import audit  # local import: db imports nothing from here
 
     if is_set(conn):
         if current is None:

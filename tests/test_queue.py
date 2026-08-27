@@ -15,7 +15,6 @@ from trackify.notify.provider import ConsoleProvider, NotificationProvider, Send
 
 from .conftest import at
 
-
 # --- helpers ----------------------------------------------------------------
 
 class FlakyProvider(NotificationProvider):
@@ -476,3 +475,94 @@ def test_idempotency_keys_are_unchanged_by_the_new_parameter(conn, student, conf
     explicit_none = queue.idempotency_key(1, Trigger.ARRIVAL, "2026-09-01", "in", None)
     assert without == explicit_none
     assert without != queue.idempotency_key(1, Trigger.ARRIVAL, "2026-09-01", "in", "se1")
+
+
+# --- a re-entry is an arrival, not a late arrival ---------------------------
+
+def test_a_reentry_reaches_the_guardian_as_a_plain_arrival(conn, student, config):
+    """The morning's ARRIVAL already burned the (student, arrival, day, in) key, so
+    without a discriminator the return would be swallowed as a duplicate -- and with
+    the old LATE trigger it went out as 'arrived late at 3:00 PM' instead."""
+    for moment in (at(6, 50), at(14, 0)):
+        queue.enqueue_for_scan(conn, record_scan(conn, student, moment, config), config)
+    back = record_scan(conn, student, at(15, 0), config, override_reason="supervisor ok")
+    queue.enqueue_for_scan(conn, back, config)
+
+    bodies = [r["body"] for r in conn.execute(
+        "SELECT body FROM notifications WHERE trigger = 'arrival' ORDER BY id")]
+    assert len(bodies) == 2
+    assert "arrived 3:00 PM" in bodies[1]
+    assert not conn.execute(
+        "SELECT 1 FROM notifications WHERE trigger = 'late'").fetchall()
+
+
+def test_two_reentries_are_two_messages_not_one(conn, student, config):
+    """Keyed on the scan id, so a second authorised return is its own event."""
+    record_scan(conn, student, at(6, 50), config)
+    record_scan(conn, student, at(9, 0), config)
+    for hour in (10, 12):
+        queue.enqueue_for_scan(
+            conn, record_scan(conn, student, at(hour, 0), config,
+                              override_reason="supervisor ok"), config)
+        record_scan(conn, student, at(hour, 30), config)
+
+    assert conn.execute(
+        "SELECT COUNT(*) FROM notifications WHERE trigger = 'arrival'"
+    ).fetchone()[0] == 2
+
+
+# --- the daily cap must not strand what it never tried ----------------------
+
+def test_the_daily_cap_leaves_untried_rows_pending(conn, make_student, config):
+    """claim_batch marks every group 'sending' before the first send. When the cap
+    halts the pass, anything it never reached is claimed-but-unattempted -- and left as
+    'sending' it is swept into 'unknown' at next launch. 'Delivery unconfirmed' for a
+    message that never left the building poisons the one pile a human has to trust."""
+    import dataclasses
+    tight = dataclasses.replace(config, limits=dataclasses.replace(
+        config.limits, daily_message_cap=3, per_recipient_daily_cap=100))
+
+    for index in range(20):
+        sid = make_student(guardian_mobile=f"6391712{index:05d}", first=f"S{index}")
+        queue.enqueue(conn, sid, Trigger.ARRIVAL, at(7, 0), tight, direction="in")
+    backdate(conn)
+
+    with pytest.raises(BreakerTripped):
+        queue.drain(conn, ConsoleProvider(), tight, breaker(conn, tight))
+
+    counts = dict(conn.execute(
+        "SELECT status, COUNT(*) FROM notifications GROUP BY status").fetchall())
+    assert counts.get("sending", 0) == 0, "claimed but never attempted, and abandoned"
+    assert counts.get("pending", 0) > 0
+
+
+def test_released_rows_are_not_counted_as_attempts(conn, make_student, config):
+    """Nothing was sent, so nothing may burn a retry -- otherwise a capped morning
+    would exhaust retry_limit without a single message being tried."""
+    import dataclasses
+    tight = dataclasses.replace(config, limits=dataclasses.replace(
+        config.limits, daily_message_cap=2, per_recipient_daily_cap=100))
+
+    for index in range(10):
+        sid = make_student(guardian_mobile=f"6391713{index:05d}", first=f"T{index}")
+        queue.enqueue(conn, sid, Trigger.ARRIVAL, at(7, 0), tight, direction="in")
+    backdate(conn)
+
+    with pytest.raises(BreakerTripped):
+        queue.drain(conn, ConsoleProvider(), tight, breaker(conn, tight))
+
+    assert conn.execute(
+        "SELECT MAX(retry_count) FROM notifications WHERE status = 'pending'"
+    ).fetchone()[0] == 0
+
+
+def test_which_cap_halts_is_a_type_not_a_substring(conn):
+    """queue.drain used to decide with `if "Daily SMS cap" in str(exc)`, so rewording
+    the message in limits.py would have silently downgraded the daily cap to a
+    per-message suppression -- with every test still green."""
+    from trackify.notify.limits import DailyCapReached, RecipientCapReached
+
+    assert DailyCapReached("anything at all").halts is True
+    assert RecipientCapReached("anything at all").halts is False
+    assert issubclass(DailyCapReached, BreakerTripped)
+    assert issubclass(RecipientCapReached, BreakerTripped)

@@ -10,7 +10,6 @@ import pytest
 
 pytest.importorskip("qtpy")
 
-from trackify.core.qrcodes import encode
 from trackify.core.service import ScanService
 from trackify.ui.worker import QueueStats
 
@@ -460,7 +459,6 @@ def test_the_decision_rule_is_on_the_inspection_page(qtbot, kiosk, student):
     kiosk.btn_metal.click()
     qtbot.wait(10)
 
-    rule = kiosk.inspection.findChild(type(kiosk.inspect_student), None)
     texts = [w.text() for w in kiosk.inspection.findChildren(type(kiosk.inspect_student))]
     assert scr.DECISION_RULE in texts
 
@@ -646,6 +644,7 @@ def test_a_failing_screening_never_takes_the_gate_down(qtbot, kiosk, student):
 
 def test_screening_can_be_turned_off_entirely(qtbot, conn, config, student):
     import dataclasses
+
     from trackify.core.service import ScanService
     from trackify.ui.kiosk import KioskWindow
 
@@ -669,6 +668,7 @@ def test_screening_can_be_turned_off_entirely(qtbot, conn, config, student):
 
 def test_a_category_button_records_the_incident(qtbot, kiosk, conn, student, monkeypatch):
     from qtpy.QtWidgets import QDialog
+
     from trackify.ui import screening as scr
 
     def fake_exec(self):
@@ -690,6 +690,7 @@ def test_a_category_button_records_the_incident(qtbot, kiosk, conn, student, mon
 
 def test_the_category_button_preselects_it_in_the_dialog(qtbot, kiosk, student, monkeypatch):
     from qtpy.QtWidgets import QDialog
+
     from trackify.ui import screening as scr
 
     seen = {}
@@ -715,6 +716,7 @@ def test_cancelling_the_dialog_leaves_an_unfinished_inspection(
 ):
     """Not 'clear', and not nothing at all: the inspection genuinely did not finish."""
     from qtpy.QtWidgets import QDialog
+
     from trackify.ui import screening as scr
 
     monkeypatch.setattr(scr.IncidentDialog, "exec",
@@ -733,6 +735,7 @@ def test_school_tool_opens_custody_and_holds_the_item(
     qtbot, kiosk, conn, student, monkeypatch
 ):
     from qtpy.QtWidgets import QDialog
+
     from trackify.ui import screening as scr
 
     def fake_exec(self):
@@ -820,6 +823,7 @@ def test_the_scanner_input_stays_invisible_under_the_stylesheet(qtbot, kiosk):
     padding or min-height fights this widget's max-height and puts a stray input box
     under the clock on the gate screen."""
     from pathlib import Path
+
     from qtpy.QtWidgets import QApplication
 
     QApplication.instance().setStyleSheet(

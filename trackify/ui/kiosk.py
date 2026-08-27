@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 from qtpy.QtCore import QSize, Qt, QTimer, Slot
-from qtpy.QtGui import QFontDatabase, QPainter, QPainterPath, QPixmap
+from qtpy.QtGui import QPainter, QPainterPath, QPixmap
 from qtpy.QtWidgets import (
     QDialog,
     QFrame,
@@ -35,15 +35,15 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from ..core.config import PROJECT_ROOT
 from ..core import custody
-from ..core.security import AttemptGate
 from ..core import screening as screening_taxonomy
+from ..core.config import PROJECT_ROOT
 from ..core.screening import Outcome as ScreeningOutcome
+from ..core.security import AttemptGate
 from ..core.service import Presentation, ScanPresentation, ScanService
 from ..notify.limits import TokenBucket
-from .camera import CameraPanel
 from . import icons
+from .camera import CameraPanel
 from .records import PasswordDialog, RecordsPage
 from .screening import CustodyDialog, IncidentDialog
 from .worker import QueueStats
@@ -946,7 +946,7 @@ class KioskWindow(QWidget):
 
             self._closed_for = day    # latch BEFORE the work, so a failure cannot loop
             result = self.service.close_day(day, at=now)
-        except Exception as exc:      # noqa: BLE001 - never take the gate down for this
+        except Exception as exc:  # noqa: BLE001 - never take the gate down for this
             # Includes the connection being closed during shutdown, when a queued
             # clock tick can still arrive after the database has gone.
             self.status_session.setText(f"End-of-day job failed: {exc}")

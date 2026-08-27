@@ -9,7 +9,6 @@ import pytest
 from trackify.core import screening
 from trackify.core.screening import Outcome
 
-
 # --- the taxonomy -----------------------------------------------------------
 
 def test_categories_are_disjoint_by_what_makes_them_dangerous():

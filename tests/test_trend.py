@@ -21,7 +21,8 @@ def record(conn, student_id, date, status, flags=""):
 
 def day(index: int) -> str:
     """A date string for school day `index`, 1-based, starting 2026-09-01."""
-    from datetime import date as Date, timedelta
+    from datetime import date as Date
+    from datetime import timedelta
     return (Date(2026, 9, 1) + timedelta(days=index - 1)).isoformat()
 
 

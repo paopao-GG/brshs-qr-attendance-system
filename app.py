@@ -111,7 +111,7 @@ def main(argv=None) -> int:
     # would mark parent notifications sent when nothing was sent.
     try:
         provider = build_provider(args.provider, config)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - the kiosk starts without SMS, never not at all
         print(f"[SMS] {args.provider} provider could not be created: {exc}\n"
               "      Starting without notifications; the status bar will show it.",
               file=sys.stderr)

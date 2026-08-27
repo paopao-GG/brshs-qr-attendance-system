@@ -15,10 +15,8 @@ pytest.importorskip("qtpy")
 from qtpy.QtCore import QThread
 
 from trackify.core import db
-from trackify.core.qrcodes import encode
 from trackify.core.service import ScanService
-from trackify.notify.provider import (Availability, NotificationProvider,
-                                      SendResult)
+from trackify.notify.provider import Availability, NotificationProvider, SendResult
 from trackify.ui.worker import QueueStats, SmsWorker
 
 from .conftest import lrn_for, payload_for
@@ -67,9 +65,10 @@ def db_path(tmp_path):
 
 def test_network_call_runs_off_the_ui_thread(qtbot, db_path, config):
     """The actual contract: provider.send() must not execute on the UI thread."""
+    from datetime import datetime, timedelta
+
     from trackify.core.attendance import Trigger
     from trackify.notify import queue
-    from datetime import datetime, timedelta
 
     ui_thread = QThread.currentThread()
 

@@ -176,7 +176,7 @@ def _own_number(provider: GsmProvider) -> str:
     """The SIM's own MSISDN via AT+CNUM. Often blank on PH prepaid SIMs."""
     try:
         raw = provider._command("AT+CNUM", 5.0)
-    except Exception:
+    except Exception:  # noqa: BLE001 - a diagnostic label; any failure just means we do not know it
         return "the module's number"
     for line in raw.splitlines():
         if "+CNUM:" in line:

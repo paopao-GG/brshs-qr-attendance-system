@@ -23,8 +23,17 @@ from dataclasses import dataclass
 
 from ..core.db import utcnow
 
-# The criteria, in matrix order. Names match risk_scores' columns so a weight can never
-# be silently applied to the wrong term.
+# The criteria, in matrix order, and the keys of the weights_json blob persisted in
+# ahp_weights. They are NOT the risk_scores column names -- those are p_absent,
+# tardiness_score and early_departure_score; a comment here claimed otherwise for a
+# long time and it was never true.
+#
+# This is now load-bearing rather than documentation: Weights is built by zipping it
+# against the derived vector, and as_dict reads it back. It used to be neither -- the
+# row order was hand-mapped to weights[0], weights[1], weights[2] and restated a third
+# time in as_dict, so the constant asserted a guarantee that nothing enforced. Swapping
+# two rows of the matrix would have silently applied the tardiness weight to absence.
+# test_ahp.py pins it against the dataclass field order.
 CRITERIA = ("absence", "tardiness", "early_departure")
 
 # Saaty's Random Index. CR is CI/RI, so this is what makes the check calibrated to the
@@ -70,8 +79,7 @@ class Weights:
         return self.cr <= MAX_CR
 
     def as_dict(self) -> dict[str, float]:
-        return {"absence": self.absence, "tardiness": self.tardiness,
-                "early_departure": self.early_departure}
+        return {name: getattr(self, name) for name in CRITERIA}
 
     @property
     def caveat(self) -> str:
@@ -140,7 +148,7 @@ def derive(matrix=DOCUMENTED_MATRIX, *, elicited: bool = False,
     cr = ci / ri
 
     return Weights(
-        absence=weights[0], tardiness=weights[1], early_departure=weights[2],
+        **dict(zip(CRITERIA, weights, strict=True)),
         lambda_max=lambda_max, ci=ci, cr=cr, n=n, version=version,
         elicited_from=elicited_from, elicited_at=elicited_at, elicited=elicited,
     )

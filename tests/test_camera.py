@@ -15,14 +15,17 @@ pytest.importorskip("zxingcpp")
 qrcode = pytest.importorskip("qrcode")
 
 from PIL import Image
-from qtpy.QtCore import QMetaObject, Q_ARG, Qt, QThread
+from qtpy.QtCore import Q_ARG, QMetaObject, Qt, QThread
 from qtpy.QtGui import QImage
 
 from trackify.core.config import CameraConfig
-from trackify.core.qrcodes import encode
 from trackify.core.service import ScanService
 from trackify.ui.camera import (
-    CameraPanel, DecodeWorker, choose_format, is_compressed, pick_camera,
+    CameraPanel,
+    DecodeWorker,
+    choose_format,
+    is_compressed,
+    pick_camera,
 )
 
 from .conftest import payload_for

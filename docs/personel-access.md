@@ -70,6 +70,9 @@ are what would close it; they are not built.
 
 - **There is no default.** First use asks staff to *set* one. A known default shipped in the
   client's repository is a back door, not a convenience.
+- **At least eight characters.** It was four. The lockout below is in-process only, so anyone
+  who can restart the application gets a fresh five attempts — which means the length is doing
+  most of the work.
 - Stored as an **argon2** hash in the `app_settings` table — never in `config.toml`, which is
   committed to git, and never in plain text.
 - Changing it requires the current one, so nobody can lock the staff out of their own records

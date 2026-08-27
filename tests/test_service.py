@@ -4,7 +4,7 @@ import pytest
 from trackify.core.qrcodes import encode
 from trackify.core.service import Presentation, ScanService
 
-from .conftest import lrn_for, payload_for, at
+from .conftest import at, lrn_for, payload_for
 
 SECRET = "test-secret"
 
@@ -221,6 +221,7 @@ def test_clear_screening_writes_nothing_about_the_student(service, conn, student
 def test_a_screening_cannot_exist_without_its_scan(service, conn):
     """Rule 2, enforced by the schema rather than by convention."""
     import sqlite3
+
     from trackify.core.screening import Outcome
 
     with pytest.raises(sqlite3.IntegrityError):

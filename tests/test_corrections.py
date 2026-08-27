@@ -311,3 +311,42 @@ def test_the_audit_row_names_the_student_not_an_id(conn, present):
     entry = corrections.edit_log(conn)[0]
     assert "Dela Cruz, Juan" in entry["old_value"]
     assert "student " not in entry["old_value"]
+
+
+# --- absence runs, shared by the SF2 five-day rule and the risk model --------
+
+@pytest.mark.parametrize("statuses,longest,trailing", [
+    (["absent", "absent", "absent"], 3, 3),
+    (["absent", "absent", "present"], 2, 0),
+    (["present", "present"], 0, 0),
+    ([], 0, 0),
+    (["absent", "", "absent"], 1, 1),          # no record is not evidence of absence
+])
+def test_absence_runs(statuses, longest, trailing):
+    assert corrections.longest_absence_run(statuses) == longest
+    assert corrections.trailing_absence_run(statuses) == trailing
+
+
+def test_a_suspended_day_is_transparent_to_a_run():
+    """A per-section suspension writes 'excused' on a date that is still a column. It
+    used to reset the run to zero, so a child who missed a fortnight around one
+    suspended Wednesday scored 2 instead of 4 -- in the risk model AND on the form."""
+    week = ["absent", "absent", "excused", "absent", "absent"]
+
+    assert corrections.longest_absence_run(week) == 4
+    assert corrections.trailing_absence_run(week) == 4
+
+
+def test_a_day_the_student_attended_still_breaks_a_run():
+    """Transparency is for days nobody could attend, not for days they did."""
+    assert corrections.longest_absence_run(
+        ["absent", "absent", "online", "absent"]) == 2
+
+
+def test_the_form_and_the_model_agree_on_the_same_week():
+    """One rule, two callers. They disagreed before and one of them fed a paper."""
+    from trackify.analytics import risk  # noqa: F401 - import path check
+    week = ["absent", "excused", "absent", "absent", "absent"]
+
+    assert corrections.longest_absence_run(week) == 4
+    assert corrections.trailing_absence_run(week) == 4

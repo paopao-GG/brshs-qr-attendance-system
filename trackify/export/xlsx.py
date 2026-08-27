@@ -20,6 +20,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from ..core import corrections
+from ..core.dates import MONTHS
+from . import safe_filename
 
 HEAD = Font(bold=True, size=11)
 TITLE = Font(bold=True, size=14)
@@ -33,9 +35,6 @@ CORRECTED = PatternFill("solid", fgColor="FFF3CD")
 WEEKEND = PatternFill("solid", fgColor="F2F2F2")
 THIN = Side(style="thin", color="BFBFBF")
 BOX = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
-
-MONTHS = ("January", "February", "March", "April", "May", "June", "July",
-          "August", "September", "October", "November", "December")
 
 
 def export_register(
@@ -148,5 +147,4 @@ def export_register(
 
 
 def default_filename(label: str, year: int, month: int) -> str:
-    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in label)
-    return f"attendance-{safe}-{year}-{month:02d}.xlsx"
+    return f"attendance-{safe_filename(label)}-{year}-{month:02d}.xlsx"

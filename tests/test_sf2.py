@@ -443,3 +443,21 @@ def test_a_real_adviser_is_printed(conn, section, adviser, klass, config, tmp_pa
 
 def test_the_filename_names_the_form_the_section_and_the_month():
     assert sf2.default_filename("7-Rizal", 2026, 9) == "SF2-7-Rizal-2026-09.xlsx"
+
+
+def test_a_suspended_day_does_not_reset_the_five_day_rule(conn, section,
+                                                          make_student, config):
+    """A per-section suspension writes 'excused' on a date that is still a column. If
+    that reset the run, a child absent either side of it would never trigger guideline
+    5's home visitation -- the one intervention the form exists to prompt."""
+    student = make_student(first="Lea", last="Katigbak", sex="F")
+    week = ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-07"]
+    school_days(conn, week)
+    for day in week:
+        mark(conn, student, day, "absent")
+    conn.execute("UPDATE attendance_days SET status = 'excused' WHERE date = ?",
+                 ("2026-09-03",))
+
+    days = sf2.class_days(conn, section, YEAR, MONTH)
+    learner = sf2.learners(conn, section, days)[0]
+    assert sf2.consecutive_absences(learner, days) == 4

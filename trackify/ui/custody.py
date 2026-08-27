@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
     QComboBox,
     QDialog,

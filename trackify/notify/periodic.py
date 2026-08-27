@@ -28,17 +28,16 @@ from dataclasses import dataclass, field
 from datetime import date as Date
 from datetime import datetime, timedelta
 
+from ..core import corrections
 from ..core.attendance import Trigger
 from ..core.config import Config
+from ..core.dates import MONTHS
 from . import queue
 
-# Statuses that count as an attendance opportunity, matching analytics/trend.py: an
-# excused day is not a day the student failed to attend, so it leaves the denominator.
-PRESENT = ("present", "late", "online")
-COUNTED = PRESENT + ("absent",)
-
-MONTHS = ("January", "February", "March", "April", "May", "June", "July",
-          "August", "September", "October", "November", "December")
+# One definition, in core. An excused day is not a day the student failed to attend, so
+# it leaves the denominator -- see corrections.NON_OPPORTUNITY.
+PRESENT = corrections.PRESENT_STATUSES
+COUNTED = corrections.COUNTED_STATUSES
 
 
 @dataclass(frozen=True)

@@ -5,7 +5,6 @@ gets on day one: every sheet must exist and say what is missing. A missing sheet
 a bug and a zero reads as a finding.
 """
 import pytest
-
 from openpyxl import load_workbook
 
 from trackify.analytics import ahp
@@ -24,7 +23,8 @@ def record(conn, student_id, date, status, flags=""):
 
 
 def day(index: int) -> str:
-    from datetime import date as Date, timedelta
+    from datetime import date as Date
+    from datetime import timedelta
     return (Date(2026, 9, 1) + timedelta(days=index - 1)).isoformat()
 
 

@@ -216,6 +216,7 @@ def test_the_deactivate_dialog_says_it_is_not_a_deletion(qtbot):
 
 def test_deactivating_stops_the_card_at_the_gate(qtbot, page, conn, config):
     from datetime import datetime
+
     from trackify.core.service import Presentation
 
     student = conn.execute("SELECT id FROM students LIMIT 1").fetchone()[0]
@@ -289,8 +290,6 @@ def test_the_preview_refuses_to_import_without_a_name(qtbot, page, conn, sheet):
 
 def test_the_preview_names_the_cards_needing_a_reprint(qtbot, page, conn, sheet):
     """The one consequence of an import that happens off-screen, in a box of cards."""
-    student = conn.execute(
-        "SELECT * FROM students WHERE last_name = 'Dela Cruz'").fetchone()
     path = sheet([(999999999999, "Dela Cruz, Juan", "Maria", 9171234567)])
 
     dialog, plan = preview(page, conn, path)

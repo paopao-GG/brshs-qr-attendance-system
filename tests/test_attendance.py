@@ -9,7 +9,6 @@ from trackify.core.sessions import suspend_day
 
 from .conftest import at
 
-
 # --- direction state machine ------------------------------------------------
 
 def test_first_scan_is_in_second_is_out(conn, student, config):
@@ -40,6 +39,83 @@ def test_override_permits_reentry(conn, student, config):
         "SELECT override_reason FROM scan_events ORDER BY id DESC LIMIT 1"
     ).fetchone()[0]
     assert "medical" in reason
+
+
+def test_a_reentry_does_not_reclassify_the_morning_as_late(conn, student, config):
+    """Lateness is a property of the day's FIRST arrival, not of any arrival.
+
+    A student in at 06:50 is present. Leaving at 14:00 and coming back at 15:00 with a
+    supervisor's authorisation used to rerun `is_late` against 15:00 and rewrite the
+    day to 'late' -- a record the scanner never observed.
+    """
+    record_scan(conn, student, at(6, 50), config)
+    record_scan(conn, student, at(14, 0), config)
+    back = record_scan(conn, student, at(15, 0), config,
+                       override_reason="forgot bag, supervisor ok")
+
+    assert back.outcome is Outcome.RECORDED_IN
+    assert back.status == "present"
+    assert conn.execute(
+        """SELECT status FROM attendance_days
+           WHERE student_id = ? AND superseded_by IS NULL""", (student,)
+    ).fetchone()["status"] == "present"
+
+
+def test_a_reentry_never_emits_the_late_trigger(conn, student, config):
+    """The guardian already had 'arrived 6:50 AM' and 'left school 2:00 PM'. A third
+    text saying 'arrived late at 3:00 PM' is false, and it is the message a parent acts
+    on."""
+    record_scan(conn, student, at(6, 50), config)
+    record_scan(conn, student, at(14, 0), config)
+    back = record_scan(conn, student, at(15, 0), config, override_reason="supervisor ok")
+
+    assert Trigger.LATE not in back.triggers
+    assert back.triggers == (Trigger.ARRIVAL,)
+
+
+def test_a_genuinely_late_first_arrival_is_still_late(conn, student, config):
+    """The fix must not blunt the thing lateness is for."""
+    first = record_scan(conn, student, at(7, 40), config)
+
+    assert first.status == "late"
+    assert first.triggers == (Trigger.LATE,)
+
+
+def test_a_reentry_after_a_late_arrival_stays_late(conn, student, config):
+    record_scan(conn, student, at(7, 40), config)
+    record_scan(conn, student, at(14, 0), config)
+    back = record_scan(conn, student, at(15, 0), config, override_reason="supervisor ok")
+
+    assert back.status == "late"
+    assert back.triggers == (Trigger.ARRIVAL,)
+
+
+def test_a_reentry_is_flagged_so_the_register_shows_it(conn, student, config):
+    record_scan(conn, student, at(6, 50), config)
+    record_scan(conn, student, at(14, 0), config)
+    record_scan(conn, student, at(15, 0), config, override_reason="supervisor ok")
+
+    flags = conn.execute(
+        """SELECT flags FROM attendance_days
+           WHERE student_id = ? AND superseded_by IS NULL""", (student,)
+    ).fetchone()["flags"]
+    assert "re_entry" in flags
+
+
+def test_a_reentry_keeps_the_mornings_entry_scan(conn, student, config):
+    """minutes_on_campus is measured from entry_scan_id. Repointing it at the re-entry
+    would silently discard the morning and report a 40-minute school day."""
+    first = record_scan(conn, student, at(6, 50), config)
+    record_scan(conn, student, at(14, 0), config)
+    record_scan(conn, student, at(15, 0), config, override_reason="supervisor ok")
+    record_scan(conn, student, at(16, 5), config)
+
+    row = conn.execute(
+        """SELECT entry_scan_id, minutes_on_campus FROM attendance_days
+           WHERE student_id = ? AND superseded_by IS NULL""", (student,)
+    ).fetchone()
+    assert row["entry_scan_id"] == first.scan_id
+    assert row["minutes_on_campus"] == 555          # 06:50 -> 16:05
 
 
 # --- debounce ---------------------------------------------------------------

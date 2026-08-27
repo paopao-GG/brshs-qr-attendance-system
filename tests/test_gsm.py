@@ -14,8 +14,14 @@ import time
 
 import pytest
 
-from trackify.notify.gsm import (RECHECK_SECONDS, GsmError, GsmProvider, ModemHealth,
-                                 _digits, find_port)
+from trackify.notify.gsm import (
+    RECHECK_SECONDS,
+    GsmError,
+    GsmProvider,
+    ModemHealth,
+    _digits,
+    find_port,
+)
 from trackify.notify.provider import Availability, SendResult
 
 # What the real module answered, verbatim.
@@ -465,7 +471,7 @@ def test_a_health_failure_is_returned_not_raised(monkeypatch):
     """health() reopens the port. Unplugged between passes, that GsmError used to
     leave send(), escape queue.drain -- which does not wrap provider.send -- and strand
     the claimed row in 'sending' until a restart."""
-    gsm, fake = provider()
+    gsm, _ = provider()
 
     def boom(*args, **kwargs):
         raise GsmError("module disappeared")

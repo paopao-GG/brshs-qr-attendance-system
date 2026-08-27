@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import sqlite3
 from calendar import monthrange
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date as Date
 from datetime import datetime
@@ -38,10 +39,57 @@ LETTERS = {
 # signal, modelled separately, and folding it in here would double-count it.
 PRESENT_STATUSES = ("present", "late", "online")
 
-# Excused leaves the DENOMINATOR rather than counting either way -- a student excused
-# for 3 of 40 sessions and present for the other 37 scores 37/37, not 37/40.
-# See docs/analytics-model.md section 1.
-EXCLUDED_STATUSES = ("excused",)
+# Everything that counts toward the rate DENOMINATOR: attendance plus absence, but not
+# the non-opportunity days below. Row.eligible is this rule applied to one student.
+#
+# This lived in three other modules -- analytics/trend.py, notify/periodic.py and
+# export/sf2.py -- each with a comment telling the reader to keep it in step with the
+# others. Four copies of one rule is three chances to change it in the wrong place.
+COUNTED_STATUSES = (*PRESENT_STATUSES, "absent")
+
+# Statuses meaning the student was never given the chance to attend. Two consequences,
+# and they are the same idea applied twice:
+#
+#   * the day leaves the RATE DENOMINATOR -- a student excused for 3 of 40 sessions and
+#     present for the other 37 scores 37/37, not 37/40 (docs/analytics-model.md 1)
+#   * the day is TRANSPARENT to a run of absences -- see absence_run()
+#
+# A school-wide suspension never reaches either rule, because the date drops out of the
+# register entirely. A PER-SECTION suspension does: corrections.suspend_section writes
+# 'excused' rows on a date that is still a column.
+NON_OPPORTUNITY = ("excused",)
+
+
+def _runs(statuses: Iterable[str | None]):
+    """Absence-run lengths, in school terms, skipping non-opportunity days.
+
+    The caller passes school days in order, so Friday and the following Monday are
+    adjacent and the weekend is simply not in the sequence.
+
+    A day with NO RECORD breaks a run. An unknown day is not evidence of absence, and
+    overstating a streak is what triggers a home visitation under SF2 guideline 5.
+    """
+    run = 0
+    for status in statuses:
+        if status in NON_OPPORTUNITY:
+            continue
+        run = run + 1 if status == "absent" else 0
+        yield run
+
+
+def longest_absence_run(statuses: Iterable[str | None]) -> int:
+    """The longest run anywhere in the sequence. SF2's five-consecutive-days rule."""
+    return max(_runs(statuses), default=0)
+
+
+def trailing_absence_run(statuses: Iterable[str | None]) -> int:
+    """The run ending at the LAST entry -- the streak a student is currently on.
+
+    This is the risk model's `consecutive` feature, and it is computed over every prior
+    day rather than a window: a streak that started six days ago is still a streak.
+    """
+    runs = list(_runs(statuses))
+    return runs[-1] if runs else 0
 
 
 class CorrectionType(str, Enum):

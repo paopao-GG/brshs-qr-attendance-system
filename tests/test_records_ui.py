@@ -10,10 +10,9 @@ from qtpy.QtWidgets import QDialog
 from trackify.core import corrections, security
 from trackify.core.attendance import record_scan
 from trackify.core.corrections import CorrectionType
-from trackify.core.qrcodes import encode
 from trackify.core.service import ScanService
 
-from .conftest import payload_for, at
+from .conftest import at, payload_for
 
 SECRET = "test-secret"
 DAY = "2026-09-01"

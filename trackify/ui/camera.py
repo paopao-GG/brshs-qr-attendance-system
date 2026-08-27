@@ -30,12 +30,18 @@ ago -- indistinguishable, to anyone standing at the gate, from a hung applicatio
 
 from __future__ import annotations
 
+import contextlib
 import time
 
 from qtpy.QtCore import QObject, QRectF, QSizeF, Qt, QThread, Signal, Slot
 from qtpy.QtGui import QColor, QImage, QPainter, QPen
 from qtpy.QtWidgets import (
-    QGraphicsScene, QGraphicsView, QLabel, QStackedLayout, QVBoxLayout, QWidget,
+    QGraphicsScene,
+    QGraphicsView,
+    QLabel,
+    QStackedLayout,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ..core.config import CameraConfig
@@ -44,7 +50,10 @@ from ..scan.gate import ScanGate
 
 try:
     from qtpy.QtMultimedia import (
-        QCamera, QMediaCaptureSession, QMediaDevices, QVideoFrameFormat,
+        QCamera,
+        QMediaCaptureSession,
+        QMediaDevices,
+        QVideoFrameFormat,
     )
     from qtpy.QtMultimediaWidgets import QGraphicsVideoItem
     MULTIMEDIA = True
@@ -344,10 +353,10 @@ class CameraPanel(QWidget):
     def shutdown(self) -> None:
         """Stop the camera and join the decode thread. Safe to call twice."""
         if self._camera is not None:
-            try:
+            # Qt raises RuntimeError if the C++ object is already gone -- which is the
+            # normal case on a second shutdown(), and this is documented as safe twice.
+            with contextlib.suppress(RuntimeError):
                 self._camera.stop()
-            except RuntimeError:
-                pass
         if self._thread is not None:
             self._thread.quit()
             self._thread.wait(3000)

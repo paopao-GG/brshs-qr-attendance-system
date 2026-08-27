@@ -130,3 +130,30 @@ def test_the_matrix_can_be_recovered_for_the_export(conn):
 
     assert round(matrix[0][1], 4) == 3.0
     assert round(matrix[2][0], 4) == 5.0
+
+
+# --- the criteria order is a contract, not a convention ---------------------
+
+def test_criteria_match_the_weights_fields_in_order():
+    """Weights is built by zipping CRITERIA against the derived vector, so a mismatch
+    here applies the tardiness weight to absence -- silently, and the CR check would
+    still pass because the matrix is unchanged."""
+    import dataclasses
+    fields = [f.name for f in dataclasses.fields(ahp.Weights)][:len(ahp.CRITERIA)]
+    assert tuple(fields) == ahp.CRITERIA
+
+
+def test_criteria_are_the_persisted_weight_keys(conn):
+    """weights_json round-trips through these names, so renaming one silently orphans
+    a saved weight set rather than failing loudly."""
+    import json
+    saved = ahp.save(conn, ahp.DOCUMENTED_MATRIX, elicited_from="panel")
+    stored = json.loads(conn.execute(
+        "SELECT weights_json FROM ahp_weights WHERE version = ?",
+        (saved.version,)).fetchone()[0])
+    assert set(stored) == set(ahp.CRITERIA)
+
+
+def test_as_dict_is_keyed_by_criteria():
+    derived = ahp.derive(ahp.DOCUMENTED_MATRIX)
+    assert list(derived.as_dict()) == list(ahp.CRITERIA)

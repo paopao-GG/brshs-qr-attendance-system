@@ -45,18 +45,28 @@ def test_changing_requires_the_current_password(conn):
     security.set_password(conn, "gate-2026")
 
     with pytest.raises(PasswordError, match="requires the current one"):
-        security.set_password(conn, "new-one")
+        security.set_password(conn, "new-one-2027")
 
     with pytest.raises(PasswordError, match="not correct"):
-        security.set_password(conn, "new-one", current="wrong")
+        security.set_password(conn, "new-one-2027", current="wrong")
 
-    security.set_password(conn, "new-one", current="gate-2026")
-    security.verify(conn, "new-one")
+    security.set_password(conn, "new-one-2027", current="gate-2026")
+    security.verify(conn, "new-one-2027")
 
 
 def test_a_too_short_password_is_refused(conn):
+    """Measured against the constant, not a literal, so raising the floor does not
+    quietly leave a test asserting the old one."""
     with pytest.raises(PasswordError, match="at least"):
-        security.set_password(conn, "ab")
+        security.set_password(conn, "a" * (security.MIN_LENGTH - 1))
+
+    security.set_password(conn, "a" * security.MIN_LENGTH)
+
+
+def test_the_minimum_is_long_enough_to_be_worth_having(conn):
+    """It was 4. The lockout is in-process only -- restarting the app resets it -- so
+    the length is doing most of the work here."""
+    assert security.MIN_LENGTH >= 8
 
 
 def test_setting_and_changing_are_audited_without_the_password(conn):

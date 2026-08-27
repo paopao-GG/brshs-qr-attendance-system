@@ -1,3 +1,6 @@
 -r requirements.txt
 pytest>=8.0
 pytest-qt>=4.4
+
+# Lint gate. Config in pyproject.toml; `ruff check .` must be clean.
+ruff>=0.16

@@ -7,6 +7,8 @@ The failure this module exists to prevent is duplication: the same child in the 
 twice, one row carrying their attendance history and the other carrying their working
 card. test_a_corrected_lrn_does_not_duplicate_the_student is the one that matters.
 """
+import sqlite3
+
 import pytest
 
 from trackify.core import enrolment, roster
@@ -306,6 +308,7 @@ def test_deactivating_stops_the_card_at_the_gate(conn, config, enrolled):
     """The whole point: ScanService.student_row() filters active = 1."""
     import dataclasses
     from datetime import datetime
+
     from trackify.core.qrcodes import encode
     from trackify.core.service import Presentation, ScanService
 
@@ -521,3 +524,53 @@ def test_an_unchanged_student_is_never_counted(conn, enrolled):
 
     assert plan.counts[UNCHANGED] == 1
     assert plan.sex_recorded == []
+
+
+# --- all or nothing ----------------------------------------------------------
+
+def test_an_import_that_fails_midway_writes_nothing(conn, monkeypatch):
+    """The connection runs in autocommit, so without a transaction each student landed
+    on its own: a failure at row 3 of 5 left 2 written and no way back -- after the
+    preview dialog had already told the operator what would happen."""
+    from trackify.core import enrolment as module
+
+    candidates = [candidate(lrn=f"11199515000{n}", last=f"Student{n}") for n in range(5)]
+    plan = enrolment.plan_import(conn, candidates)
+
+    calls = {"n": 0}
+    real_insert = module._insert
+
+    def explode(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise sqlite3.OperationalError("disk I/O error")
+        return real_insert(*args, **kwargs)
+
+    monkeypatch.setattr(module, "_insert", explode)
+    with pytest.raises(sqlite3.OperationalError):
+        enrolment.apply_import(conn, plan, actor_name="T. San Jose")
+
+    assert students(conn) == []
+    assert conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0] == 0
+
+
+def test_a_successful_import_still_commits(conn, enrolled):
+    """The rollback path must not cost the happy one."""
+    enrolled(candidate(lrn="111995150037"), candidate(lrn="111995150038", last="Reyes"))
+    assert len(students(conn)) == 2
+
+
+def test_an_edit_and_its_audit_row_land_together(conn, enrolled, monkeypatch):
+    """A changed record with no trail is the exact thing the trail exists to prevent."""
+    from trackify.core import enrolment as module
+    enrolled(candidate())
+    student = students(conn)[0]["id"]
+    before = students(conn)[0]["first_name"]
+
+    monkeypatch.setattr(module, "audit", lambda *a, **k: (_ for _ in ()).throw(
+        sqlite3.OperationalError("disk I/O error")))
+    with pytest.raises(sqlite3.OperationalError):
+        enrolment.update_student(conn, student, first_name="Changed",
+                                 actor_name="T. San Jose", reason="typo")
+
+    assert students(conn)[0]["first_name"] == before

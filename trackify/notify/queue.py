@@ -13,6 +13,7 @@ returns. The worker drains it separately.
 from __future__ import annotations
 
 import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from hashlib import sha256
@@ -191,9 +192,14 @@ def enqueue_for_scan(
     """Queue whatever a ScanResult implies. Called right after record_scan."""
     if not result.recorded:
         return []
+    # A re-entry is a second ARRIVAL on the same day in the same direction, so it hashes
+    # to the morning's idempotency key and would be dropped as a duplicate. The scan id
+    # makes it distinct: the guardian was told the child left, and should be told they
+    # came back.
+    extra = f"reentry:{result.scan_id}" if result.reentry else None
     return [
         enqueue(conn, result.student_id, trigger, result.at, config,
-                direction=result.direction)
+                direction=result.direction, dedupe_extra=extra)
         for trigger in result.triggers
     ]
 
@@ -269,7 +275,13 @@ def drain(
     stats = {"sent": 0, "failed": 0, "unknown": 0, "suppressed": 0, "messages": 0}
     now = now or datetime.now()
 
-    for group, body in claim_batch(conn, config, now=now):
+    # claim_batch marks EVERY group 'sending' up front, so anything left when this pass
+    # exits early has been claimed but never attempted. Tracked here so it can be put
+    # back -- see the BreakerTripped handler.
+    pending = claim_batch(conn, config, now=now)
+
+    while pending:
+        group, body = pending.pop(0)
         mobile = group[0]["guardian_mobile"]
         ids = [r["id"] for r in group]
         coalesce_group = f"cg-{ids[0]}" if len(ids) > 1 else None
@@ -288,15 +300,20 @@ def drain(
         except BreakerTripped as exc:
             _mark(conn, ids, "suppressed", error=str(exc))
             stats["suppressed"] += len(ids)
-            if "Daily SMS cap" in str(exc):
+            if exc.halts:
+                # Everything still in `pending` was claimed by claim_batch and never
+                # attempted. Left as 'sending' it would be swept into 'unknown' by
+                # reconcile_stale on the next launch -- "delivery unconfirmed" for
+                # messages that never left the building, which is exactly the pile a
+                # human is supposed to be able to trust. Put it back.
+                _release(conn, [r["id"] for chunk, _ in pending for r in chunk])
                 raise
             continue
 
         if bucket is not None:
-            import time as _time
             wait = bucket.time_until()
             if wait > 0:
-                _time.sleep(wait)
+                time.sleep(wait)
             bucket.try_acquire()
 
         result = provider.send(mobile, body)
@@ -318,6 +335,23 @@ def drain(
             stats["failed"] += len(ids)
 
     return stats
+
+
+def _release(conn: sqlite3.Connection, ids: list[int]) -> None:
+    """Hand claimed-but-unattempted rows back to the queue.
+
+    Only ever called for rows this pass never gave to the provider, so returning them
+    to 'pending' cannot duplicate a message -- which is the one thing the queue may not
+    do. retry_count is untouched: nothing was tried.
+    """
+    if not ids:
+        return
+    placeholders = ",".join("?" * len(ids))
+    conn.execute(
+        f"""UPDATE notifications SET status = 'pending', claimed_at = NULL
+            WHERE id IN ({placeholders}) AND status = 'sending'""",
+        ids,
+    )
 
 
 def _mark(

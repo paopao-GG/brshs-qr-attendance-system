@@ -7,7 +7,6 @@ subsystem here already degrades instead of crashing; these tests hold the provid
 the same standard.
 """
 
-import pytest
 
 import app as app_module
 from trackify.notify.provider import Availability, ConsoleProvider, NullProvider

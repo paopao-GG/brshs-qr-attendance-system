@@ -7,7 +7,7 @@ so most of these tests are about the chain being complete rather than about feat
 import pytest
 
 from trackify.core import custody
-from trackify.core.custody import CustodyError, Status
+from trackify.core.custody import CustodyError
 
 
 @pytest.fixture
@@ -95,7 +95,7 @@ def test_storage_and_student_are_different_outcomes(conn, held):
 
 
 def test_an_invented_destination_is_refused(conn, held):
-    with pytest.raises(ValueError, match="storage.*student"):
+    with pytest.raises(ValueError, match=r"storage.*student"):
         custody.give_back(conn, held, "the bin")
 
 

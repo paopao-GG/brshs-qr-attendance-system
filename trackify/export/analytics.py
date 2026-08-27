@@ -22,6 +22,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from ..analytics import ahp, risk, screening, trend
+from . import safe_filename
 
 HEAD = Font(bold=True, size=11)
 TITLE = Font(bold=True, size=14)
@@ -291,7 +292,7 @@ def _ahp_sheet(sheet, weights, matrix) -> None:
 
     sheet.cell(row, 1, "Pairwise comparison matrix").font = HEAD
     row += 1
-    _headers(sheet, row, ("",) + CRITERION_LABELS)
+    _headers(sheet, row, ("", *CRITERION_LABELS))
     row += 1
     for index, label in enumerate(CRITERION_LABELS):
         sheet.cell(row, 1, label).font = HEAD
@@ -304,9 +305,9 @@ def _ahp_sheet(sheet, weights, matrix) -> None:
     row += 1
     sheet.cell(row, 1, "Derived weights").font = HEAD
     row += 1
-    for label, value in zip(CRITERION_LABELS,
-                            (weights.absence, weights.tardiness,
-                             weights.early_departure)):
+    # as_dict() is keyed by ahp.CRITERIA, so this no longer restates the three names in
+    # a fourth place -- and strict catches a labels tuple that has drifted from them.
+    for label, value in zip(CRITERION_LABELS, weights.as_dict().values(), strict=True):
         sheet.cell(row, 1, label)
         cell = sheet.cell(row, 2, round(value, 4))
         cell.alignment = CENTRE
@@ -524,5 +525,4 @@ def export_analytics(conn: sqlite3.Connection, config, path: str | Path, *,
 
 
 def default_filename(scope: str) -> str:
-    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in scope)
-    return f"trackify-analytics-{safe}-{datetime.now():%Y%m%d}.xlsx"
+    return f"trackify-analytics-{safe_filename(scope)}-{datetime.now():%Y%m%d}.xlsx"

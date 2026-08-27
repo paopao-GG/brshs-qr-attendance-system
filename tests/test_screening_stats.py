@@ -4,7 +4,6 @@ These are counts, never scores. prohibited-items.md section 9 is explicit that i
 must not enter the risk composite: over a short study the count is near zero for every
 student, and a near-constant criterion contributes noise and cannot be validated.
 """
-from datetime import datetime
 
 from trackify.analytics import screening
 from trackify.core.db import utcnow

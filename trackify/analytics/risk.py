@@ -33,6 +33,7 @@ import math
 import sqlite3
 from dataclasses import dataclass, field
 
+from ..core import corrections
 from ..core.db import utcnow
 from . import ahp
 
@@ -123,7 +124,7 @@ class RiskReport:
         return bool(self.rows)
 
     def by_band(self) -> dict[str, int]:
-        counts = {band: 0 for band in ("Low", "Monitor", "Elevated", "High")}
+        counts = dict.fromkeys(("Low", "Monitor", "Elevated", "High"), 0)
         for row in self.rows:
             counts[row.band] = counts.get(row.band, 0) + 1
         return counts
@@ -256,12 +257,12 @@ def _rows_for_fit(history: dict[int, list[sqlite3.Row]]):
                 continue                      # nothing to predict from
             window = prior[-WINDOW:]
 
-            consecutive = 0
-            for earlier in reversed(prior):
-                if earlier["status"] == "absent":
-                    consecutive += 1
-                else:
-                    break
+            # Shared with the SF2 five-day rule so the two cannot drift. It used to be
+            # inlined here and broke a streak on ANY non-absent status, including the
+            # 'excused' rows a per-section suspension writes -- so one suspended
+            # Wednesday reset every student in the section to zero.
+            consecutive = corrections.trailing_absence_run(
+                d["status"] for d in prior)
 
             weekday = Date.fromisoformat(day["date"]).weekday()
             features.append([
@@ -296,7 +297,12 @@ def _fit(features, targets) -> tuple[object, ModelQuality] | tuple[None, str]:
 
     import numpy as np
     from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import confusion_matrix, precision_score, recall_score, roc_auc_score
+    from sklearn.metrics import (
+        confusion_matrix,
+        precision_score,
+        recall_score,
+        roc_auc_score,
+    )
     from sklearn.model_selection import StratifiedKFold, cross_val_predict
 
     x = np.asarray(features, dtype=float)
@@ -327,8 +333,11 @@ def _fit(features, targets) -> tuple[object, ModelQuality] | tuple[None, str]:
         recall=float(recall_score(y, predicted, zero_division=0)),
         roc_auc=float(roc_auc_score(y, scores)),
         true_pos=int(tp), false_pos=int(fp), true_neg=int(tn), false_neg=int(fn),
+        # strict: a feature added to _rows_for_fit but not to FEATURES would otherwise
+        # be silently dropped here, and the export would report a model with a term
+        # nobody can see.
         coefficients={name: float(value)
-                      for name, value in zip(FEATURES, model.coef_[0])},
+                      for name, value in zip(FEATURES, model.coef_[0], strict=True)},
         intercept=float(model.intercept_[0]),
         validation=validation,
     )
@@ -337,7 +346,8 @@ def _fit(features, targets) -> tuple[object, ModelQuality] | tuple[None, str]:
 
 def _current_features(days: list[sqlite3.Row]) -> list[float]:
     """Features as they stand today, for predicting the next school day."""
-    from datetime import date as Date, timedelta
+    from datetime import date as Date
+    from datetime import timedelta
 
     window = days[-WINDOW:]
     consecutive = 0

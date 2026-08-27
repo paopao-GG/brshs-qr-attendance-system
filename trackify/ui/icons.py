@@ -101,7 +101,7 @@ def _svg(name: str, colour: str) -> bytes:
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" '
         f'fill="none" stroke="{colour}" stroke-width="{STROKE}" '
         f'stroke-linecap="round" stroke-linejoin="round">{body}</svg>'
-    ).encode("utf8")
+    ).encode()
 
 
 def pixmap(name: str, size: int, colour: str) -> QPixmap:

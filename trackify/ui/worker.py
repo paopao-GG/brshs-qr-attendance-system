@@ -148,7 +148,7 @@ class SmsWorker(QObject):
                 error=str(exc),
             ))
             return
-        except Exception as exc:                      # never kill the thread
+        except Exception as exc:  # noqa: BLE001 - never kill the worker thread
             self.stats_changed.emit(QueueStats(
                 unsent=queue.unsent_count(self._conn),
                 provider=self.provider.name,

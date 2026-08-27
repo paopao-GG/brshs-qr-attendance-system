@@ -58,6 +58,10 @@ class ScanResult:
     status: str | None = None
     flags: tuple[str, ...] = ()
     scan_id: int | None = None
+    # An authorised return after the student had already departed. Carried so the queue
+    # can tell a re-entry apart from the day's first arrival -- they share an
+    # idempotency key otherwise.
+    reentry: bool = False
     triggers: tuple[Trigger, ...] = ()
     message: str = ""
     previous_at: datetime | None = None
@@ -138,6 +142,7 @@ def record_scan(
         )
 
     # --- Direction from state -----------------------------------------------
+    reentry = False
     if last is None:
         direction = "in"
     elif last["direction"] == "in":
@@ -152,12 +157,15 @@ def record_scan(
                 message="Already departed today - supervisor override required",
             )
         direction = "in"  # re-entry, explicitly authorised
+        reentry = True
 
     flags: list[str] = []
     if method == "manual":
         flags.append("manual_entry")
     if is_out_of_window(day, at):
         flags.append("out_of_window")
+    if reentry:
+        flags.append("re_entry")
 
     cursor = conn.execute(
         """INSERT INTO scan_events
@@ -171,9 +179,14 @@ def record_scan(
 
     triggers: list[Trigger] = []
     if direction == "in":
-        status = "late" if is_late(day, at) else "present"
-        triggers.append(Trigger.LATE if status == "late" else Trigger.ARRIVAL)
-        _upsert_entry(conn, student_id, day_key, scan_id, status, flags)
+        status = _upsert_entry(conn, student_id, day_key, scan_id, day, at, flags)
+        # A re-entry is an ARRIVAL, never a LATE one. The day was classified by the
+        # first scan and _upsert_entry preserved it; emitting LATE here would text the
+        # guardian "arrived late at 3:00 PM" about a student who was at the gate before
+        # seven -- the same failure the debounce rule at the top of this file exists to
+        # prevent, one branch over.
+        triggers.append(Trigger.ARRIVAL if reentry or status != "late"
+                        else Trigger.LATE)
         outcome = Outcome.RECORDED_IN
     else:
         if is_early_departure(day, at):
@@ -190,6 +203,7 @@ def record_scan(
         status=status,
         flags=tuple(flags),
         scan_id=scan_id,
+        reentry=reentry,
         triggers=tuple(triggers),
         message=f"{'IN' if direction == 'in' else 'OUT'} {fmt_time(at)}",
     )
@@ -204,26 +218,53 @@ def _merge_flags(existing: str, new: list[str]) -> str:
 
 
 def _upsert_entry(
-    conn: sqlite3.Connection, student_id: int, day: str,
-    scan_id: int, status: str, flags: list[str],
-) -> None:
+    conn: sqlite3.Connection, student_id: int, day: str, scan_id: int,
+    school_day, at: datetime, flags: list[str],
+) -> str:
+    """Open the day's attendance row, or fold a re-entry into the existing one.
+
+    Returns the status now in force.
+
+    LATENESS IS DECIDED ONCE, BY THE DAY'S FIRST ARRIVAL. On a re-entry the stored
+    status is preserved and handed straight back. Recomputing it against the clock --
+    which is what this used to do -- rewrote an authorised 3pm return as 'late' for a
+    student who had scanned in at 06:50, and queued the guardian a text saying so.
+
+    entry_scan_id is likewise left pointing at the FIRST entry, because _close_out
+    measures minutes_on_campus from it; repointing it would report a 40-minute school
+    day. A row whose entry_scan_id is NULL is the exception -- an out-scan opened it,
+    so this really is the first entry and it is classified fresh.
+    """
     row = conn.execute(
-        """SELECT id, flags FROM attendance_days
+        """SELECT id, flags, status, entry_scan_id FROM attendance_days
            WHERE student_id = ? AND date = ? AND superseded_by IS NULL""",
         (student_id, day),
     ).fetchone()
+
     if row is None:
+        status = "late" if is_late(school_day, at) else "present"
         conn.execute(
             """INSERT INTO attendance_days
                (student_id, date, entry_scan_id, status, flags, created_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
             (student_id, day, scan_id, status, ",".join(flags), utcnow()),
         )
-    else:
+        return status
+
+    if row["entry_scan_id"] is None:
+        status = "late" if is_late(school_day, at) else "present"
         conn.execute(
-            "UPDATE attendance_days SET entry_scan_id = ?, status = ?, flags = ? WHERE id = ?",
+            """UPDATE attendance_days
+               SET entry_scan_id = ?, status = ?, flags = ? WHERE id = ?""",
             (scan_id, status, _merge_flags(row["flags"], flags), row["id"]),
         )
+        return status
+
+    conn.execute(
+        "UPDATE attendance_days SET flags = ? WHERE id = ?",
+        (_merge_flags(row["flags"], flags), row["id"]),
+    )
+    return row["status"]
 
 
 def _close_out(
@@ -245,7 +286,7 @@ def _close_out(
             """INSERT INTO attendance_days
                (student_id, date, exit_scan_id, status, flags, created_at)
                VALUES (?, ?, ?, 'present', ?, ?)""",
-            (student_id, day, scan_id, _merge_flags("", flags + ["entry_missing"]), utcnow()),
+            (student_id, day, scan_id, _merge_flags("", [*flags, "entry_missing"]), utcnow()),
         )
         return "present"
 

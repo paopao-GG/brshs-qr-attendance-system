@@ -58,7 +58,33 @@ class TokenBucket:
 
 
 class BreakerTripped(RuntimeError):
-    """The daily spend cap was hit. The worker must stop, not continue."""
+    """A spend cap refused a send.
+
+    Two caps raise this and they need OPPOSITE handling, so `halts` says which rather
+    than the caller matching on the message text. It used to: queue.drain decided
+    whether to stop the worker with `if "Daily SMS cap" in str(exc)`, so rewording an
+    f-string in this file would have silently turned the daily cap into "suppress the
+    whole queue one message at a time" -- with every test still passing.
+    """
+
+    halts = False
+
+
+class DailyCapReached(BreakerTripped):
+    """The whole day's budget is gone. The worker must stop, not continue.
+
+    Almost always a notification trigger looping, and continuing would burn the rest of
+    the SIM's credit proving it.
+    """
+
+    halts = True
+
+
+class RecipientCapReached(BreakerTripped):
+    """One guardian has had their day's allowance. Suppress this message and carry on --
+    everybody else's messages are unaffected and must still go out."""
+
+    halts = False
 
 
 @dataclass(frozen=True)
@@ -102,7 +128,7 @@ class SpendBreaker:
         state = self.state()
         if state.tripped or state.sent_today >= self.daily_cap:
             self._trip()
-            raise BreakerTripped(
+            raise DailyCapReached(
                 f"Daily SMS cap of {self.daily_cap} reached ({state.sent_today} sent). "
                 "Sending halted. Investigate before raising the cap -- this usually "
                 "means a notification trigger is looping."
@@ -116,7 +142,7 @@ class SpendBreaker:
             (recipient, day),
         ).fetchone()[0]
         if to_recipient >= self.per_recipient_cap:
-            raise BreakerTripped(
+            raise RecipientCapReached(
                 f"Per-recipient daily cap of {self.per_recipient_cap} reached for "
                 f"{recipient}. Message suppressed."
             )

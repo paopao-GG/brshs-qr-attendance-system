@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .config import PROJECT_ROOT
@@ -23,7 +23,7 @@ _local = threading.local()
 def utcnow() -> str:
     """Timestamps are ISO-8601 with explicit offset, so a DST or TZ change never
     silently reorders records."""
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    return datetime.now(UTC).astimezone().isoformat(timespec="seconds")
 
 
 def connect(db_path: Path | str | None = None) -> sqlite3.Connection:

@@ -73,7 +73,7 @@ def pack(rows: list[sqlite3.Row]) -> list[list[sqlite3.Row]]:
     current: list[sqlite3.Row] = []
 
     for row in rows:
-        candidate = current + [row]
+        candidate = [*current, row]
         if current and gsm7.septets(render_group(candidate)) > gsm7.SINGLE_SEGMENT:
             packed.append(current)
             current = [row]

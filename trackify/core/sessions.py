@@ -14,7 +14,6 @@ from datetime import date as Date
 from datetime import datetime, time
 
 from .config import Config, _parse_time
-from .db import utcnow
 
 
 @dataclass(frozen=True)
@@ -90,5 +89,12 @@ def is_early_departure(day: SchoolDay, at: datetime) -> bool:
 
 
 def is_out_of_window(day: SchoolDay, at: datetime) -> bool:
-    """Before the gate opens, or after a generous grace past dismissal."""
+    """Before the gate opens.
+
+    There is deliberately no upper bound. This docstring used to claim one -- "or after
+    a generous grace past dismissal" -- which the code never implemented. A late
+    departure is already described by early_departure_cutoff and dismissal_time, and
+    flagging every after-hours out-scan as out_of_window would mark the flag on so many
+    ordinary days that nobody would read it.
+    """
     return at.time() < day.entry_open

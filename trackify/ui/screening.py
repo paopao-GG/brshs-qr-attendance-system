@@ -11,7 +11,6 @@ someone reads the record a year later.
 
 from __future__ import annotations
 
-from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
     QComboBox,
     QDialog,

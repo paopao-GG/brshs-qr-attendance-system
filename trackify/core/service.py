@@ -16,7 +16,7 @@ from datetime import datetime
 from enum import Enum
 
 from ..notify import periodic, queue
-from . import qrcodes
+from . import qrcodes, screening
 from .attendance import (
     DayClose,
     Outcome,
@@ -28,7 +28,6 @@ from .attendance import (
 )
 from .config import Config
 from .db import audit, transaction
-from . import screening
 from .screening import Outcome as Outcome_
 from .sessions import get_school_day
 

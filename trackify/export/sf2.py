@@ -40,8 +40,9 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.properties import PageSetupProperties
 
-MONTHS = ("January", "February", "March", "April", "May", "June", "July",
-          "August", "September", "October", "November", "December")
+from ..core import corrections
+from ..core.dates import MONTHS
+from . import safe_filename
 
 # --- geometry, read out of the school's own workbook -------------------------
 # Every constant below was extracted from the BIFF records of
@@ -116,10 +117,11 @@ BLOCK_LABELS = {
     UNRECORDED: "<=== SEX NOT RECORDED | TOTAL Per Day ===>",
 }
 
-# Counted as attending. Mirrors corrections.PRESENT_STATUSES deliberately: if the two
-# ever disagree, the SF2 and the register would report different numbers for the same
-# month out of the same database.
-PRESENT_STATUSES = ("present", "late", "online")
+# Imported, not restated. This used to be a second copy with a comment asking the next
+# reader to keep the two in sync -- but a comment is not a mechanism, and the SF2 and
+# the register reporting different numbers out of the same database for the same month
+# is precisely the failure it was worried about.
+PRESENT_STATUSES = corrections.PRESENT_STATUSES
 
 CONSECUTIVE_ABSENCE_ALERT = 5
 
@@ -252,9 +254,7 @@ def class_days(conn: sqlite3.Connection, section_id: int, year: int,
         key = day.isoformat()
         if known.get(key) is False:                 # explicitly suspended
             continue
-        if key in recorded:
-            days.append(key)
-        elif day.weekday() < 5 and key in known and key in attested:
+        if key in recorded or (day.weekday() < 5 and key in known and key in attested):
             days.append(key)
 
     if len(days) > SLOTS:
@@ -335,14 +335,14 @@ def consecutive_absences(learner: Learner, days: list[str]) -> int:
     """The longest run of absences over consecutive CLASS days.
 
     Consecutive in school terms, not calendar terms: Friday and the following Monday
-    are consecutive, and a suspended Wednesday does not break a run because it was
-    never a day the child could have attended.
+    are consecutive because the weekend is not in `days` at all, and a suspended day is
+    transparent rather than a break -- the child was never given the chance to attend.
+
+    That second half used to be a claim in this docstring rather than behaviour. The
+    rule now lives in corrections.longest_absence_run, shared with the risk model's
+    streak feature so the form and the model cannot disagree about what a run is.
     """
-    longest = run = 0
-    for day in days:
-        run = run + 1 if learner.marks.get(day) == "absent" else 0
-        longest = max(longest, run)
-    return longest
+    return corrections.longest_absence_run(learner.marks.get(day) for day in days)
 
 
 # --- writing -----------------------------------------------------------------
@@ -545,7 +545,8 @@ def _blocks(sheet, blocks, days: list[str]) -> int:
         running.append(totals)
         row = _total_row(sheet, row, BLOCK_LABELS[sex], len(members), totals, days)
 
-    combined = [sum(column) for column in zip(*running)] if running else [0] * SLOTS
+    combined = ([sum(column) for column in zip(*running, strict=True)]
+                if running else [0] * SLOTS)
     row = _total_row(sheet, row, "Combined TOTAL Per Day",
                      sum(len(members) for _, members in blocks), combined, days)
     return row
@@ -575,7 +576,7 @@ def summary(blocks, days: list[str]) -> dict:
     this dict and print as blank boxes -- as does the percentage of enrolment, which is
     a ratio against a figure nobody here holds.
     """
-    by_sex = {sex: members for sex, members in blocks}
+    by_sex = dict(blocks)
     male = by_sex.get(MALE, [])
     female = by_sex.get(FEMALE, [])
     everyone = [person for members in by_sex.values() for person in members]
@@ -718,5 +719,4 @@ def _signatures(sheet, top: int, sf2, section) -> None:
 
 
 def default_filename(label: str, year: int, month: int) -> str:
-    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in label)
-    return f"SF2-{safe}-{year}-{month:02d}.xlsx"
+    return f"SF2-{safe_filename(label)}-{year}-{month:02d}.xlsx"

@@ -1,0 +1,49 @@
+# Tooling only. TRACKIFY is run from source (python app.py), not installed as a package,
+# so there is deliberately no [project] table and no build backend here.
+
+[tool.ruff]
+line-length = 90          # matches the prevailing style; not 79, not 120
+target-version = "py311"  # the Pi ships 3.11; do not let 3.13-only syntax in
+# qr-generator is a separate PyInstaller tool with its own lifecycle; it is not
+# part of the trackify package and is not gated on this config.
+extend-exclude = [".venv", "qr-generator"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",     # pycodestyle
+    "F",          # pyflakes -- unused imports and names
+    "I",          # import ordering
+    "B",          # bugbear: mutable defaults, loop-variable capture
+    "BLE",        # blind `except Exception`. NOT ignored -- every site must carry a
+                  # `# noqa: BLE001 - <why>`. A broad except at a UI or worker boundary
+                  # is often correct here (a background job must never take the gate
+                  # down), and the point is that each one says so out loud.
+    "C4",         # comprehension rewrites
+    "UP",         # pyupgrade
+    "SIM",        # obvious simplifications
+    "RUF",        # ruff's own
+]
+ignore = [
+    # This codebase explains WHY in prose above the code and keeps the code plain.
+    # Long explanatory comments are the house style, not debt.
+    "E501",
+    # `class Trigger(str, Enum)` rather than StrEnum. The .value of every member is
+    # written into notifications.trigger and matched by a CHECK constraint; swapping
+    # the base class changes str() behaviour and is not worth the risk for cosmetics.
+    "UP042",
+    # '·' and friends appear in operator-facing strings on purpose.
+    "RUF001", "RUF002", "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The scripts prepend the repo root to sys.path before importing trackify, so their
+# imports genuinely cannot come first.
+"scripts/*" = ["E402"]
+# Tests reach into private helpers on purpose -- that is where the failure paths are --
+# and set up state with one-line semicolon groups for readability.
+"tests/*" = ["SLF001", "E402", "E702"]
+# A deliberate availability probe: the import IS the test for whether the module exists.
+"trackify/ui/camera.py" = ["F401"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["trackify"]

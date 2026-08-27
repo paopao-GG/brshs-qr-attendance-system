@@ -24,11 +24,11 @@ October must not be silently readmitted by November's file.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Iterable
 
 from . import roster
-from .db import audit, utcnow
+from .db import audit, transaction, utcnow
 from .mobile import InvalidMobile, normalise
 
 # Columns an import is allowed to write. Everything absent from this tuple is deliberate;
@@ -246,24 +246,32 @@ def plan_import(
 
 def apply_import(conn: sqlite3.Connection, plan: ImportPlan, *,
                  actor_name: str) -> dict[str, int]:
-    """Write the plan. Returns how many rows of each kind were written."""
+    """Write the plan. Returns how many rows of each kind were written.
+
+    ALL OR NOTHING. The connection runs in autocommit, so without this transaction each
+    student landed on its own: failing at row 60 of 109 left 59 written, 50 not, and no
+    way back -- after a preview dialog had already told the operator what would happen.
+    This is the case db.transaction was written for.
+    """
     actor_name = (actor_name or "").strip()
     if not actor_name:
         raise EnrolmentError("An import requires the name of the person doing it.")
 
     written = {NEW: 0, UPDATED: 0, LRN_CHANGED: 0}
 
-    for change in plan.changes:
-        if not change.writes:
-            continue
-        candidate = change.candidate
-        section_id = _ensure_section(conn, candidate.grade_level, candidate.section_name)
+    with transaction(conn):
+        for change in plan.changes:
+            if not change.writes:
+                continue
+            candidate = change.candidate
+            section_id = _ensure_section(
+                conn, candidate.grade_level, candidate.section_name)
 
-        if change.kind == NEW:
-            _insert(conn, candidate, section_id, actor_name)
-        else:
-            _update(conn, change, section_id, actor_name)
-        written[change.kind] += 1
+            if change.kind == NEW:
+                _insert(conn, candidate, section_id, actor_name)
+            else:
+                _update(conn, change, section_id, actor_name)
+            written[change.kind] += 1
 
     return written
 
@@ -387,15 +395,18 @@ def update_student(conn: sqlite3.Connection, student_id: int, *,
             raise EnrolmentError(
                 f"LRN {changed['lrn']} already belongs to another student.")
 
-    assignments = ", ".join(f"{column} = ?" for column in changed)
-    conn.execute(f"UPDATE students SET {assignments} WHERE id = ?",
-                 (*changed.values(), student_id))
+    # The edit and its audit row are one fact. Written separately, a crash between them
+    # produces a changed record with no trail -- the exact thing the trail is for.
+    with transaction(conn):
+        assignments = ", ".join(f"{column} = ?" for column in changed)
+        conn.execute(f"UPDATE students SET {assignments} WHERE id = ?",
+                     (*changed.values(), student_id))
 
-    note = f" {CARD_WARNING}" if "lrn" in changed else ""
-    audit(conn, "student.edited", entity_type="student", entity_id=student_id,
-          old_value=", ".join(f"{c}={current[c]!r}" for c in changed),
-          new_value=", ".join(f"{c}={v!r}" for c, v in changed.items()),
-          actor_name=actor_name, reason=reason + note)
+        note = f" {CARD_WARNING}" if "lrn" in changed else ""
+        audit(conn, "student.edited", entity_type="student", entity_id=student_id,
+              old_value=", ".join(f"{c}={current[c]!r}" for c in changed),
+              new_value=", ".join(f"{c}={v!r}" for c, v in changed.items()),
+              actor_name=actor_name, reason=reason + note)
     return changed
 
 
@@ -423,11 +434,12 @@ def set_active(conn: sqlite3.Connection, student_id: int, active: bool, *,
     if current["active"] == value:
         return
 
-    conn.execute("UPDATE students SET active = ? WHERE id = ?", (value, student_id))
-    audit(conn, "student.readmitted" if active else "student.deactivated",
-          entity_type="student", entity_id=student_id,
-          old_value=f"active={current['active']}", new_value=f"active={value}",
-          actor_name=actor_name, reason=reason)
+    with transaction(conn):
+        conn.execute("UPDATE students SET active = ? WHERE id = ?", (value, student_id))
+        audit(conn, "student.readmitted" if active else "student.deactivated",
+              entity_type="student", entity_id=student_id,
+              old_value=f"active={current['active']}", new_value=f"active={value}",
+              actor_name=actor_name, reason=reason)
 
 
 def roster_rows(conn: sqlite3.Connection, *, section_id: int | None = None,

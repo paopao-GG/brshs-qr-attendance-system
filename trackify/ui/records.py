@@ -40,12 +40,10 @@ from qtpy.QtWidgets import (
 
 from ..core import corrections, security
 from ..core.corrections import CorrectionError, CorrectionType
+from ..core.dates import MONTHS
 from ..export import xlsx
 from . import icons
 from .roster import RosterPage
-
-MONTHS = ("January", "February", "March", "April", "May", "June", "July",
-          "August", "September", "October", "November", "December")
 
 TYPE_LABELS = (
     ("Excused absence", CorrectionType.EXCUSED),
@@ -227,9 +225,11 @@ class ChangePasswordDialog(QDialog):
         root.addWidget(heading)
 
         form = QFormLayout()
-        self.current = QLineEdit(); self.current.setEchoMode(QLineEdit.Password)
-        self.new = QLineEdit(); self.new.setEchoMode(QLineEdit.Password)
-        self.confirm = QLineEdit(); self.confirm.setEchoMode(QLineEdit.Password)
+        self.current = QLineEdit()
+        self.new = QLineEdit()
+        self.confirm = QLineEdit()
+        for box in (self.current, self.new, self.confirm):
+            box.setEchoMode(QLineEdit.Password)
         form.addRow("Current", self.current)
         form.addRow("New", self.new)
         form.addRow("Repeat", self.confirm)
@@ -660,7 +660,9 @@ class RecordsPage(QWidget):
                 item = QTableWidgetItem(str(value))
                 item.setTextAlignment(Qt.AlignCenter)
                 if offset == 4:
-                    font = item.font(); font.setBold(True); item.setFont(font)
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
                 self.table.setItem(row_index, len(days) + offset, item)
 
         # Narrow enough that a 31-day month plus the totals fits a kiosk display

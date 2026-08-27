@@ -51,7 +51,7 @@ def decode_qr(image) -> str | None:
         result = zxingcpp.read_barcode(
             image, formats=zxingcpp.BarcodeFormat.QRCode
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - a bad frame is not a bad program, see below
         # A malformed or zero-sized frame is a bad frame, not a bad program. The next
         # one arrives in 100 ms.
         return None
