@@ -979,8 +979,28 @@ class KioskWindow(QWidget):
         Same treatment as a dead camera: text, tooltip, amber. The alternative is a bar
         reading "SMS: gsm" while the queue quietly waits for hardware nobody has
         noticed is unplugged.
+
+        A provider that is not sending gets the same honesty for the same reason, but
+        in words rather than colour. "SMS: console" reads like a working transport to
+        anyone who has not read notify/provider.py, while no guardian is being told
+        anything -- so it says "(not sending)" outright. Amber stays reserved for
+        faults; see the comment on that branch.
         """
-        if stats.provider_available:
+        if stats.provider_available and not stats.provider_sends:
+            # console and null. Deliberately NOT amber: in this bar amber means a fault
+            # to act on -- a dead camera, an unplugged module, a tripped breaker -- and
+            # a provider chosen at startup is a setting, not a fault. Colouring it the
+            # same teaches operators to read past the colour that matters. The words do
+            # the work instead.
+            self.status_provider.setText(f"SMS: {stats.provider} (not sending)")
+            # The worker says WHY -- a software provider, or SMS_LIVE off. The two
+            # leave different rows behind, so the reason is not decoration.
+            self.status_provider.setToolTip(
+                stats.provider_detail
+                or "Nothing is being sent. Check the provider and SMS_LIVE in .env."
+            )
+            self.status_provider.setProperty("alert", "false")
+        elif stats.provider_available:
             self.status_provider.setText(f"SMS: {stats.provider}")
             self.status_provider.setToolTip("")
             self.status_provider.setProperty("alert", "false")

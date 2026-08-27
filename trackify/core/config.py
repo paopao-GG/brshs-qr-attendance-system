@@ -151,15 +151,19 @@ class Sf2Config:
 @dataclass(frozen=True)
 class Secrets:
     qr_secret: str = ""
-    # Recipients allowed to receive a real text. EMPTY MEANS UNRESTRICTED, which is
-    # correct for production and dangerous while testing: the demo roster holds 19
-    # valid-format Philippine numbers, and an unli-text SIM has no cost brake to stop a
-    # loop bug texting all of them. Lives in .env rather than config.toml so a personal
-    # number never lands in git.
-    allowlist: tuple[str, ...] = ()
-
-    def allows(self, mobile: str) -> bool:
-        return not self.allowlist or mobile in self.allowlist
+    # The station-wide switch on outbound SMS. True and texts really reach guardians;
+    # false and nothing leaves the machine whatever else is configured.
+    #
+    # Together with consent_on_file this is the whole permission model: consent decides
+    # WHICH students may be texted about, SMS_LIVE decides whether this station texts at
+    # all. Spend caps still apply on top -- those are a runaway brake, not permission.
+    #
+    # Defaults FALSE, and that inversion is the point. It replaced SMS_ALLOWLIST, whose
+    # empty value meant UNRESTRICTED -- so a .env that was missing a line texted every
+    # guardian on the roster. A missing line must fail towards silence, not towards 81
+    # real families. Lives in .env rather than config.toml because going live is a
+    # property of one station on one morning, not of the source tree.
+    sms_live: bool = False
 
 
 @dataclass(frozen=True)
@@ -188,22 +192,15 @@ def _load_dotenv(path: Path) -> None:
         os.environ.setdefault(key.strip(), value.strip())
 
 
-def _allowlist(raw: str) -> tuple[str, ...]:
-    """Comma-separated numbers, normalised so 09XX and 639XX both match what is stored."""
-    from .mobile import InvalidMobile, normalise
+# Anything else -- "false", "no", "0", a typo, an empty string, the key absent -- is
+# False. A switch that decides whether real families get texted must not be turned on by
+# a value somebody guessed at.
+_TRUTHY = frozenset({"true", "1", "yes", "on"})
 
-    out = []
-    for item in raw.split(","):
-        item = item.strip()
-        if not item:
-            continue
-        try:
-            number = normalise(item)
-        except InvalidMobile:
-            continue
-        if number:
-            out.append(number)
-    return tuple(out)
+
+def _flag(raw: str) -> bool:
+    """A .env boolean. Only the four spellings in _TRUTHY mean yes."""
+    return raw.strip().lower() in _TRUTHY
 
 
 
@@ -277,6 +274,6 @@ def load_config(path: Path | None = None) -> Config:
         }),
         secrets=Secrets(
             qr_secret=os.environ.get("TRACKIFY_QR_SECRET", ""),
-            allowlist=_allowlist(os.environ.get("SMS_ALLOWLIST", "")),
+            sms_live=_flag(os.environ.get("SMS_LIVE", "")),
         ),
     )

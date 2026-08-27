@@ -52,6 +52,19 @@ class Availability:
 class NotificationProvider(ABC):
     name: str = "abstract"
 
+    # Does a successful send() actually put a text on a network?
+    #
+    # False for the software providers, and the kiosk says so in the status bar. The
+    # name alone does not: "SMS: console" reads like a working transport to anyone who
+    # has not read this file, while no guardian is being told anything. Same argument
+    # the bar already makes for an unplugged module -- it is said out loud rather than
+    # left to be inferred.
+    #
+    # Declared here rather than tested by name in the UI, because trackify/ui holds no
+    # domain logic (TDD.md section 4) and a hardcoded ("console", "null") tuple over
+    # there is wrong the day a fourth provider is written by someone who never sees it.
+    sends_real_messages: bool = True
+
     @abstractmethod
     def send(self, recipient: str, body: str) -> SendResult:
         """Send one message to one normalised (639XXXXXXXXX) number."""
@@ -72,9 +85,16 @@ class NotificationProvider(ABC):
 
 
 class ConsoleProvider(NotificationProvider):
-    """Prints instead of sending. The default during development."""
+    """Prints instead of sending. The default during development.
+
+    Note that send() returns ok=True, so queue.drain marks the rows 'sent' -- the
+    database records a delivery that never happened. That is the right behaviour for
+    exercising the pipeline, and the reason the status bar has to be explicit: the only
+    trace afterwards is a provider_message_id reading 'console-4'.
+    """
 
     name = "console"
+    sends_real_messages = False
 
     def __init__(self) -> None:
         self.sent: list[tuple[str, str]] = []
@@ -89,6 +109,7 @@ class NullProvider(NotificationProvider):
     """Counts, prints nothing, sends nothing. For the pilot run."""
 
     name = "null"
+    sends_real_messages = False
 
     def __init__(self) -> None:
         self.count = 0

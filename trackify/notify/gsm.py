@@ -56,6 +56,17 @@ ESC = b"\x1b"
 # against a port that is never going to answer.
 PROBE_TIMEOUT = 2.0
 
+# Tries within that same budget, not on top of it -- so a port that is never going to
+# answer still costs PROBE_TIMEOUT and no more.
+#
+# One AT is too fragile a handshake on Linux. Opening the CH340 bridge toggles DTR/RTS,
+# and on the Pi the first read after that came back as a single framing-error byte
+# (b'\xe0') with the AT lost behind it -- the module answered perfectly on the second
+# try, and on every open afterwards. A one-shot probe therefore declared a working
+# SIM800C dead on the first open after boot, which is the only open that matters at a
+# school gate. Windows' CH340 driver settles the lines differently and never showed it.
+PROBE_ATTEMPTS = 3
+
 # How often available() is allowed to touch the hardware while the module is missing.
 # The worker ticks every 4s; probing every tick would be pointless traffic.
 RECHECK_SECONDS = 15.0
@@ -309,16 +320,23 @@ class GsmProvider(NotificationProvider):
         """
         # Never longer than the init timeout it exists to protect: a caller that has
         # already said "give up after n seconds" cannot mean "but wait longer than that
-        # for the first byte".
-        timeout = min(PROBE_TIMEOUT, self.init_timeout)
-        if "OK" not in self._command("AT", timeout):
-            port = self.port
-            self.close()
-            raise GsmError(
-                f"{port} did not answer AT within {timeout:.0f}s. It is a serial "
-                "port but probably not the module -- on Windows the first COM port is "
-                "usually Bluetooth. Run: python scripts/test_sms.py --check"
-            )
+        # for the first byte". The attempts SHARE this budget rather than each getting
+        # it, so tolerating a lost first byte costs a dead port nothing.
+        budget = min(PROBE_TIMEOUT, self.init_timeout)
+        for _ in range(PROBE_ATTEMPTS):
+            if "OK" in self._command("AT", budget / PROBE_ATTEMPTS):
+                return
+
+        port = self.port
+        self.close()
+        raise GsmError(
+            f"{port} did not answer AT in {PROBE_ATTEMPTS} tries within "
+            f"{budget:.0f}s. Either it is a serial port that is not the module -- on "
+            "Windows the first COM port is usually Bluetooth -- or the SIM800C is not "
+            "powered: the CH340 bridge enumerates from USB alone, so the port exists "
+            "whether or not the module behind it is alive. Check VBAT can supply 2A. "
+            "Run: python scripts/test_sms.py --check"
+        )
 
     def _initialise(self) -> None:
         """Bring the module to a known state. Every line here earns its place."""

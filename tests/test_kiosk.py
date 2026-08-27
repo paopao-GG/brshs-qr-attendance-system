@@ -190,10 +190,47 @@ def test_the_indicator_clears_when_the_module_comes_back(kiosk):
 
 
 def test_a_healthy_provider_is_not_flagged(kiosk):
-    """console and null are always available; nothing about them should turn amber."""
-    kiosk.on_stats(QueueStats(unsent=0, provider="console"))
+    """console and null are always available; nothing about them should turn amber.
 
-    assert kiosk.status_provider.text() == "SMS: console"
+    Amber in this bar means a fault to act on. A provider picked at startup is a
+    setting, and colouring it like a dead camera teaches operators to read past the
+    colour that does matter. It says so in words instead -- see the test below.
+    """
+    kiosk.on_stats(QueueStats(unsent=0, provider="console", provider_sends=False))
+
+    assert kiosk.status_provider.property("alert") == "false"
+
+
+def test_a_provider_that_sends_nothing_says_so(kiosk):
+    """Otherwise the bar reads a confident "SMS: console" while the gate records
+    arrivals and not one guardian is told anything."""
+    kiosk.on_stats(QueueStats(unsent=0, provider="console", provider_sends=False))
+
+    assert kiosk.status_provider.text() == "SMS: console (not sending)"
+
+
+def test_the_bar_shows_the_reason_the_worker_gave(kiosk):
+    """Why nothing is sending is computed in the worker, which is the only place that
+    holds both the provider and the config. The bar renders it rather than guessing --
+    the two causes leave different rows behind and the operator needs to know which."""
+    kiosk.on_stats(QueueStats(
+        provider="gsm", provider_sends=False,
+        provider_detail="SMS_LIVE is false in .env, so this station is not sending.",
+    ))
+
+    assert kiosk.status_provider.text() == "SMS: gsm (not sending)"
+    assert "SMS_LIVE" in kiosk.status_provider.toolTip()
+    assert kiosk.status_provider.property("alert") == "false", \
+        "a station switched off on purpose is not a fault"
+
+
+def test_the_real_transport_is_not_labelled_not_sending(kiosk):
+    """The guard on the branch above. A bar telling the operator that a working GSM
+    module is not sending would be quietly alarming, every morning."""
+    kiosk.on_stats(QueueStats(unsent=0, provider="gsm"))
+
+    assert kiosk.status_provider.text() == "SMS: gsm"
+    assert "not sending" not in kiosk.status_provider.text()
     assert kiosk.status_provider.property("alert") == "false"
 
 

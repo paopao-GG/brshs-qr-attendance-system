@@ -1,9 +1,9 @@
 """End-to-end seeding, against a synthetic workbook and a scratch database.
 
 The property being guarded is the one that matters most now that the roster is real:
-**a student imported from a spreadsheet cannot be texted.** The SMS allowlist cannot carry
-that guarantee -- an empty SMS_ALLOWLIST restricts nothing (config.py) and .env is
-gitignored, so a fresh clone has no allowlist at all. consent_on_file = 0 is checked in
+**a student imported from a spreadsheet cannot be texted.** SMS_LIVE cannot carry that
+guarantee: it is one switch for the whole station, it lives in a gitignored .env, and it
+says nothing about a database handed to somebody else. consent_on_file = 0 is checked in
 queue.py before anything is enqueued and travels with the database file itself.
 
 The workbook here is fabricated. The real student-info.xlsx holds 124 real children's

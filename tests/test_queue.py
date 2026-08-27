@@ -292,36 +292,39 @@ def test_unsent_count_surfaces_backlog(conn, make_student, config):
     assert queue.unsent_count(conn) == 3
 
 
-# -- recipient allowlist ----------------------------------------------------
+# -- the SMS_LIVE gate -------------------------------------------------------
 
-def allowlisted(config, *numbers):
+def live(config, on):
     import dataclasses
     return dataclasses.replace(
-        config, secrets=dataclasses.replace(config.secrets, allowlist=numbers)
+        config, secrets=dataclasses.replace(config.secrets, sms_live=on)
     )
 
 
-def test_allowlist_suppresses_everyone_not_on_it(conn, config, make_student):
-    """The demo roster holds 19 valid-format Philippine numbers, and an unli-text SIM
-    has no cost brake. Without this, one stray run texts all of them."""
+def test_nothing_is_sent_when_the_station_is_not_live(conn, config, make_student):
+    """The roster holds 81 real guardians' numbers and an unli-text SIM has no cost
+    brake. One switch has to be able to stop every one of them."""
     student = make_student(guardian_mobile="639998887777")
     queue.enqueue(conn, student, Trigger.ARRIVAL, at(7, 10), config, direction="in")
     backdate(conn)
 
-    cfg = allowlisted(config, "639171234567")
+    cfg = live(config, False)
     provider = FlakyProvider([])
     stats = queue.drain(conn, provider, cfg, breaker(conn, cfg))
 
-    assert provider.calls == [], "a number off the allowlist must not be texted"
+    assert provider.calls == [], "SMS_LIVE=false must reach the transport as silence"
     assert stats["suppressed"] == 1
 
 
-def test_allowlisted_number_is_sent(conn, config, make_student):
-    student = make_student(guardian_mobile="639171234567")
+def test_a_consented_student_is_texted_when_the_station_is_live(conn, config,
+                                                               make_student):
+    """SMS_LIVE is the station gate; consent is the per-student one. With both, the
+    message goes -- to anyone consented, not to a hand-maintained number list."""
+    student = make_student(guardian_mobile="639998887777")
     queue.enqueue(conn, student, Trigger.ARRIVAL, at(7, 10), config, direction="in")
     backdate(conn)
 
-    cfg = allowlisted(config, "639171234567")
+    cfg = live(config, True)
     provider = FlakyProvider([])
     stats = queue.drain(conn, provider, cfg, breaker(conn, cfg))
 
@@ -329,36 +332,62 @@ def test_allowlisted_number_is_sent(conn, config, make_student):
     assert stats["sent"] == 1
 
 
-def test_empty_allowlist_restricts_nothing(conn, config, make_student):
-    """Correct for production. It is the testing case that needs the list set."""
+def test_an_unset_gate_sends_nothing(conn, config, make_student):
+    """The inversion that mattered when this replaced SMS_ALLOWLIST.
+
+    An empty allowlist meant UNRESTRICTED, so a .env missing that line texted every
+    guardian on the roster. An unset SMS_LIVE means the opposite: a station that has
+    not been deliberately switched on stays silent. Defaults must fail towards not
+    texting 81 families.
+    """
+    from trackify.core.config import Secrets
+
+    assert Secrets().sms_live is False
+
     student = make_student(guardian_mobile="639998887777")
     queue.enqueue(conn, student, Trigger.ARRIVAL, at(7, 10), config, direction="in")
     backdate(conn)
 
+    import dataclasses
+    cfg = dataclasses.replace(config, secrets=Secrets(qr_secret="x"))
     provider = FlakyProvider([])
-    assert queue.drain(conn, provider, config, breaker(conn, config))["sent"] == 1
+
+    assert queue.drain(conn, provider, cfg, breaker(conn, cfg))["sent"] == 0
+    assert provider.calls == []
 
 
-def test_suppressed_recipient_does_not_consume_spend_budget(conn, config, make_student):
-    """The allowlist check sits before the breaker, so a blocked number costs nothing
-    against the daily cap -- and cannot mask a genuine runaway."""
+def test_only_exact_spellings_turn_the_gate_on(monkeypatch):
+    """A switch that texts real families must not be armed by a value someone guessed.
+
+    "True"/"YES"/"on" are accepted because a person editing .env by hand writes those;
+    "maybe", "TRUE_", "" and a missing key are not.
+    """
+    from trackify.core.config import _flag
+
+    assert all(_flag(v) for v in ("true", "TRUE", "True", "1", "yes", "on", " true "))
+    assert not any(_flag(v) for v in ("false", "0", "no", "off", "", "maybe", "tru"))
+
+
+def test_a_suppressed_message_does_not_consume_spend_budget(conn, config, make_student):
+    """The gate sits before the breaker, so a suppressed message costs nothing against
+    the daily cap -- and cannot mask a genuine runaway."""
     student = make_student(guardian_mobile="639998887777")
     queue.enqueue(conn, student, Trigger.ARRIVAL, at(7, 10), config, direction="in")
     backdate(conn)
 
-    cfg = allowlisted(config, "639171234567")
+    cfg = live(config, False)
     brk = SpendBreaker(conn, daily_cap=5, per_recipient_cap=5)
     queue.drain(conn, FlakyProvider([]), cfg, brk)
 
     assert brk.state().sent_today == 0
 
 
-def test_config_fixture_does_not_inherit_the_local_allowlist(config):
+def test_config_fixture_does_not_inherit_the_local_gate(config):
     """Regression: the config fixture calls load_config(), which reads the real .env.
-    Setting SMS_ALLOWLIST there for live testing suppressed every queue test that
-    expected a send. A developer's machine-local setting must never decide whether the
-    suite passes."""
-    assert config.secrets.allowlist == ()
+    A machine-local SMS setting must never decide whether the suite passes -- it did
+    once, when SMS_ALLOWLIST was set for live testing and silently suppressed every
+    queue test that expected a send."""
+    assert config.secrets.sms_live is True
 
 
 # --- retry backoff ----------------------------------------------------------

@@ -57,3 +57,62 @@ def test_an_unbuildable_provider_never_falls_back_to_console():
     fallback = source.split("could not be created")[1]
     assert "NullProvider" in fallback
     assert "ConsoleProvider" not in fallback
+
+
+def test_only_the_real_transport_claims_to_send(config):
+    """Each provider declares whether a send reaches a handset, and the kiosk status bar
+    reads that rather than matching on names.
+
+    The declaration lives on the provider because trackify/ui holds no domain logic
+    (TDD.md section 4). A hardcoded ("console", "null") tuple in kiosk.py would pass
+    today and be wrong the day a fourth provider is written by someone who never opens
+    that file -- and the failure is silent: a bar confidently naming a transport that
+    sends nothing.
+    """
+    from trackify.notify.provider import ConsoleProvider, NullProvider
+
+    assert ConsoleProvider().sends_real_messages is False
+    assert NullProvider().sends_real_messages is False
+    assert app_module.build_provider("gsm", config).sends_real_messages is True
+
+
+def test_the_probe_survives_a_lost_first_byte():
+    """Opening the CH340 bridge on Linux toggles DTR/RTS, and the first read came back
+    as a framing-error byte with the AT lost behind it -- so a one-shot probe declared a
+    working SIM800C dead on the first open after boot, the only open that matters at a
+    school gate.
+
+    The retries share the probe budget rather than multiplying it, so a port that will
+    never answer still costs PROBE_TIMEOUT and no more.
+    """
+    from trackify.notify.gsm import PROBE_ATTEMPTS, GsmProvider
+
+    class Settling:
+        """Silent on the first AT, answers from the second -- the observed behaviour."""
+
+        def __init__(self):
+            self.writes = 0
+            self._pending = b""
+
+        def reset_input_buffer(self):
+            pass
+
+        def write(self, data):
+            self.writes += 1
+            self._pending = b"\xe0" if self.writes == 1 else b"AT\r\r\nOK\r\n"
+            return len(data)
+
+        def read(self, _n=1):
+            out, self._pending = self._pending, b""
+            return out
+
+        def close(self):
+            pass
+
+    port = Settling()
+    provider = GsmProvider("/dev/fake", serial_factory=lambda: port, clear_storage=False)
+    provider._serial = port
+    provider._probe()                      # must not raise
+
+    assert port.writes == 2, "the second AT is what should have succeeded"
+    assert PROBE_ATTEMPTS >= 2, "one attempt cannot tolerate a lost first byte"

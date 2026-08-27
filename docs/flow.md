@@ -403,8 +403,8 @@ rule and why an overlapping list would have made the category counts unusable.
 
 > Three of those statuses exist for reasons worth stating. `sending` plus `idempotency_key` is
 > what survives a worker crash without texting a parent twice. `unknown` is the parked pile
-> from 5.11b. `suppressed` is a message the system deliberately refused to send — an
-> unallowlisted recipient during testing, or the spend circuit breaker — and it is recorded
+> from 5.11b. `suppressed` is a message the system deliberately refused to send — a station
+> that is not live (`SMS_LIVE=false`), or the spend circuit breaker — and it is recorded
 > rather than dropped, so nobody later mistakes a policy decision for a delivery failure.
 >
 > `event_at` is when the scan happened; `queued_at` is when the row was written. Coalescing

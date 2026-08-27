@@ -11,7 +11,7 @@ out under the transmit burst" all present as the same AT error.
     1  --check    Opens the port, runs the init sequence, prints module identity,
                   SUPPLY VOLTAGE, signal, registration and SMS centre. No SMS.
     2  --preview  Renders every real template offline and validates GSM-7. No port.
-    3  --send     One message, to TEST_RECIPIENT only, allowlist enforced.
+    3  --send     One message, to TEST_RECIPIENT only. Needs SMS_LIVE=true.
 
 The serial port is exclusive: this script and the kiosk cannot both hold it. If the
 kiosk is running, close it first.
@@ -279,9 +279,9 @@ def resolve_recipient(raw: str, config) -> str | None:
     except mobile.InvalidMobile as exc:
         print(f"\nTEST_RECIPIENT {raw!r} is not a valid PH mobile number: {exc}")
         return None
-    if number and not config.secrets.allows(number):
-        print(f"\n{number} is not on SMS_ALLOWLIST in .env, so it will not be texted.")
-        print("That is the safety net working. Add it there if it really is your number.")
+    if number and not config.secrets.sms_live:
+        print(f"\nSMS_LIVE is false in .env, so {number} will not be texted.")
+        print("That is the safety net working. Set SMS_LIVE=true when you mean to send.")
         return None
     return number
 

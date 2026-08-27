@@ -116,13 +116,25 @@ pilot starts.
    row), so the SMS queue refuses every one of the 110 imported students. Correct behaviour, not
    a fault: a silent queue on the Pi is the consent gate working
 4. ~~Deploy to the Pi 5 and run the kiosk from it~~ — done. The real `TRACKIFY_QR_SECRET` is
-   now in `.env` on the station, so printed cards verify. One thing still open: **reconnect the
-   SIM800C**, which came off the bus during camera bring-up (its re-enumeration failed with
-   `usb usb1-port1: Cannot enable. Maybe the USB cable is bad?` — try another port or cable, as
-   with the camera) and has not been re-checked with `scripts/test_sms.py --check`. Until then
-   leave the kiosk on `--provider console`
+   in `.env`, so printed cards verify; the kiosk runs `--provider gsm`; and outbound SMS is
+   governed by **`SMS_LIVE`** in `.env` (station-wide) plus `consent_on_file` (per student).
+   `SMS_LIVE` is currently **false**, so the station queues normally and sends nothing.
 
    The station also has a desktop launcher, **TRACKIFY Scan Station**, for reopening the kiosk
    after someone presses Escape. It starts the same systemd unit the boot autostart does, so it
    cannot bring up a second instance. See [TDD.md](TDD.md) §8
+
+   **The SIM800C is not usable yet, and the fault is power, not software.** The CH340 bridge
+   enumerates from USB alone, so `/dev/ttyUSB0` appears whether or not the module behind it is
+   alive. It now answers `AT` and completes most of the init sequence, then drops off the bus
+   partway through `AT+CMGD` and re-enumerates in a loop — device numbers 70→71→72 within two
+   seconds, with the USB PID changing from `1a86:7523` to `1a86:0323`. That is the brownout
+   [hardware.md](hardware.md) §5 warns about: the module pulls up to 2 A and a USB port supplies
+   0.5–0.9 A. **Feed VBAT from a supply that can deliver 2 A**, then re-run
+   `scripts/test_sms.py --check`. Until it is stable the kiosk shows `SMS: gsm unavailable` in
+   amber and leaves the queue undrained with its retry budget intact, which is the designed
+   behaviour.
+
+   Note also that `find_port()` matches only `1a86:7523`. If this board legitimately settles on
+   `1a86:0323` once powered properly, that PID needs adding.
 5. One-week pilot on a single section before the 20-day run

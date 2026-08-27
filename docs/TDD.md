@@ -173,7 +173,7 @@ Each package owns one layer and must not reach past it.
 
 `provider.py` (the abstraction), `gsm.py` (SIM800C over AT commands), `gsm7.py` (alphabet and
 segment counting), `queue.py` (enqueue, claim, drain, retry), `coalesce.py` (siblings into one
-text), `limits.py` (spend breaker, token bucket, allowlist), `periodic.py` (weekly summary,
+text), `limits.py` (spend breaker, token bucket), `periodic.py` (weekly summary,
 absence reminder).
 
 ### `trackify/ui/` — Qt, no domain logic
@@ -221,10 +221,12 @@ written — is parked as `unknown` and **never auto-retried**. A missed text is 
 duplicate erodes a parent's trust in the system. There is no provider dashboard to reconcile
 against, so a human decides.
 
-**Consent is the gate, and it travels with the database.** `queue.enqueue` refuses without
-`consent_on_file`, before policy, before the allowlist. The allowlist lives in `.env`, which is
-not committed and restricts nothing when empty — so the consent check is the control that
-cannot be lost by copying the database somewhere else.
+**Two gates. Consent is the one that travels with the database.** `queue.enqueue` refuses
+without `consent_on_file`, before policy — so a database handed to somebody else carries its own
+permissions. `SMS_LIVE` in `.env` is the station-wide switch, applied at drain: it decides
+whether this machine texts anybody at all, defaults to false, and says nothing about any other
+copy of the database. Neither substitutes for the other. See
+[sms-notifications.md](sms-notifications.md) §7.
 
 **Every threshold is configuration.** Late time, dismissal, saturation constants, band cutoffs,
 the incident floor, absence limits. A band boundary decides whether a real child is referred to
@@ -284,8 +286,9 @@ reads as a crash and a zero reads as a finding.
 
 ### Configuration
 
-`config.toml` for behaviour, `.env` for secrets (`TRACKIFY_QR_SECRET`, `SMS_ALLOWLIST`). New
-optional sections are merged over defaults so an older `config.toml` still loads.
+`config.toml` for behaviour, `.env` for what is machine-local or secret
+(`TRACKIFY_QR_SECRET`, `SMS_LIVE`). New optional sections are merged over defaults so an older
+`config.toml` still loads.
 
 ---
 
@@ -365,9 +368,21 @@ holds for in-app icons; launcher chrome degrades to a generic glyph, not a blank
 Console and null never spend load and never text a real parent, which is what makes it safe to
 exercise the whole pipeline before go-live.
 
-**Before real messages leave:** set `SMS_ALLOWLIST` to the numbers you are willing to text —
-an empty allowlist restricts nothing. Run `python scripts/test_sms.py --check` to confirm the
-module answers, the SIM is registered, and the supply is above 3600 mV.
+Both are labelled **`SMS: console (not sending)`** in the kiosk status bar, in the ordinary grey
+rather than the amber reserved for faults -- a provider chosen at startup is a setting, not
+something to fix. Each provider declares this itself (`NotificationProvider.sends_real_messages`)
+so the UI never matches on provider names.
+
+The label matters because **both mark their notifications `sent`**: they return `ok=True`, and
+`queue.drain` records the row as delivered even though nothing left the machine. The only trace
+afterwards is a `provider_message_id` reading `console-4` or `null-4`. Do not read `sent` counts
+from a console or null run as evidence that a guardian was told anything.
+
+**Before real messages leave:** run `python scripts/test_sms.py --check` to confirm the module
+answers, the SIM is registered and the supply is above 3600 mV — then set `SMS_LIVE=true` in
+`.env` and restart. Until that flag is set the station queues normally and sends nothing, and
+the status bar says so. It defaults to false: a station that has not been deliberately switched
+on stays silent.
 
 **Modes.** `--windowed` (development), default fullscreen kiosk, `--custody` (the custody desk:
 no camera, no SMS worker), `--no-camera` (HID scanner only).

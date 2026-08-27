@@ -286,12 +286,20 @@ def drain(
         ids = [r["id"] for r in group]
         coalesce_group = f"cg-{ids[0]}" if len(ids) > 1 else None
 
-        # Before the breaker, so a blocked recipient never consumes spend budget.
-        # Empty allowlist means unrestricted; a populated one is what makes it safe to
-        # run the real transport against a roster full of real-format numbers.
-        if not config.secrets.allows(mobile):
+        # The station-wide switch. Consent already decided which students may be texted
+        # about; this decides whether this station texts at all.
+        #
+        # Before the breaker, so a suppressed message never consumes spend budget and
+        # cannot mask a genuine runaway.
+        #
+        # Suppressed here rather than refused at enqueue, for two reasons. The queue
+        # still records what WOULD have gone out, which is how the whole pipeline gets
+        # exercised without texting a single family. And 'suppressed' is terminal, so
+        # turning SMS_LIVE on at noon cannot fire the morning's backlog at 81 guardians
+        # at once -- going live starts from the next scan, not from everything missed.
+        if not config.secrets.sms_live:
             _mark(conn, ids, "suppressed",
-                  error=f"{mobile} is not on SMS_ALLOWLIST")
+                  error="SMS_LIVE is false -- this station is not sending")
             stats["suppressed"] += len(ids)
             continue
 

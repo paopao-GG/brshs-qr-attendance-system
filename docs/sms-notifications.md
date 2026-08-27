@@ -256,7 +256,7 @@ secrets, both environment-only:
 ```
 # .env  -- gitignored, never committed
 TRACKIFY_QR_SECRET=...        # HMAC key for QR payloads
-SMS_ALLOWLIST=09171234567     # comma-separated; see below
+SMS_LIVE=false                # does this station send at all; see below
 ```
 
 Behaviour lives in `config.toml`, not the environment:
@@ -278,14 +278,28 @@ per_recipient_daily_cap = 6
 requests_per_second = 2
 ```
 
-**`SMS_ALLOWLIST` is the control that makes live testing safe.** With the real transport
-pointed at a roster of real guardian numbers, one mistake texts a stranger's parent. When the
-allowlist is populated, only those numbers can be reached and everything else is marked
-`suppressed` with the reason recorded.
+**Two gates, and both must hold.**
 
-**It restricts nothing when empty.** That is deliberate — a school in production must not have
-to enumerate 71 numbers — but it means the allowlist cannot be the only guard. The consent
-check in `queue.enqueue` is the one that travels with the database.
+| Gate | Scope | Where | Lives in |
+|---|---|---|---|
+| `consent_on_file` | one student | refused at `queue.enqueue`; no row is written | the database |
+| `SMS_LIVE` | the whole station | `suppressed` at `queue.drain`, before the spend breaker | `.env` |
+
+`SMS_LIVE` decides whether this station texts anybody; consent decides which students it may
+text about. Neither substitutes for the other, and they deliberately live in different places:
+consent travels with the database to whoever is handed it, while going live is a property of one
+machine on one morning.
+
+**`SMS_LIVE` defaults to false, and only `true` / `1` / `yes` / `on` turn it on.** That
+inversion is the point. It replaced `SMS_ALLOWLIST`, a list of permitted numbers whose *empty*
+value meant **unrestricted** — so a `.env` missing one line texted every guardian on the roster,
+and `.env` is gitignored, so a fresh clone had no allowlist at all. A switch that decides whether
+real families are contacted about their children has to fail towards silence.
+
+The station-wide gate is applied at drain rather than at enqueue on purpose. The queue still
+records what *would* have gone out, so the whole pipeline can be exercised without texting a
+single family — and `suppressed` is terminal, so switching a station live at noon cannot fire the
+morning's backlog at everyone at once. Going live starts from the next scan.
 
 `.env` has been in `.gitignore` from the first commit. A secret committed once is compromised
 even after removal, because git keeps history.
@@ -306,7 +320,7 @@ The internet is no longer in this path at all. What replaced it:
 | Module answers and says ERROR | Definite failure. Retry to limit with backoff, then `failed` | Unsent count |
 | Worker crash mid-send | Claimed rows survive as `sending`; `reconcile_stale` marks them `unknown` on restart rather than resending | Alarm on next launch |
 | Daily spend cap reached | `SpendBreaker` trips; further sends `suppressed` | `SMS: HALTED`, latched until restart |
-| Recipient not on `SMS_ALLOWLIST` | `suppressed` with the number in the reason | Queue monitor |
+| `SMS_LIVE=false` | `suppressed` at drain, before the breaker, so it costs no spend budget | Status bar reads `SMS: gsm (not sending)`, grey with the reason on hover |
 | No consent on file | Refused at enqueue; no row is written at all | Returned reason, counted in the summary run |
 | Body would exceed one segment | Refused **at enqueue**, not at send — failing at double cost on every retry is worse than failing once | Returned reason |
 
@@ -341,7 +355,7 @@ Step 5 and step 8 are the two that matter most. Everything else is recoverable.
 | GSM-7 alphabet, segment counting, truncation | `trackify/notify/gsm7.py` |
 | Enqueue, claim, drain, retry, idempotency | `trackify/notify/queue.py` |
 | Sibling coalescing into one message | `trackify/notify/coalesce.py` |
-| Spend breaker, token bucket, allowlist | `trackify/notify/limits.py` |
+| Spend breaker, token bucket | `trackify/notify/limits.py` |
 | Weekly summary and absence reminder | `trackify/notify/periodic.py` |
 | The drain worker on its own thread | `trackify/ui/worker.py` |
 | Staged live bring-up | `scripts/test_sms.py` |

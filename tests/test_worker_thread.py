@@ -348,3 +348,50 @@ def test_a_provider_with_no_opinion_is_always_drained(qtbot, db_path, config):
 
     _run(qtbot, worker, lambda: len(provider.sent) > 0)
     assert conn.execute("SELECT status FROM notifications").fetchone()["status"] == "sent"
+
+
+# --- why nothing is being sent ----------------------------------------------
+
+def _worker(provider, sms_live):
+    """A worker built without starting its thread. _sends and the reason are pure."""
+    import dataclasses
+
+    from trackify.core.config import load_config
+    from trackify.ui.worker import SmsWorker
+
+    cfg = load_config()
+    cfg = dataclasses.replace(
+        cfg, secrets=dataclasses.replace(cfg.secrets, sms_live=sms_live)
+    )
+    return SmsWorker(provider, cfg)
+
+
+def test_a_live_station_on_a_real_transport_is_sending():
+    from trackify.notify.gsm import GsmProvider
+
+    assert _worker(GsmProvider("/dev/null"), sms_live=True)._sends is True
+
+
+def test_a_real_transport_is_not_sending_when_the_station_is_not_live():
+    """The case that matters at the gate: the module is plugged in and answering, and
+    the bar must still say nothing is going out."""
+    from trackify.notify.gsm import GsmProvider
+
+    worker = _worker(GsmProvider("/dev/null"), sms_live=False)
+
+    assert worker._sends is False
+    assert "SMS_LIVE" in worker._not_sending_reason
+    assert "suppressed" in worker._not_sending_reason, \
+        "say which row the operator will find afterwards"
+
+
+def test_a_software_provider_is_not_sending_even_when_live():
+    """SMS_LIVE=true cannot make console send. Both halves have to hold."""
+    from trackify.notify.provider import ConsoleProvider
+
+    worker = _worker(ConsoleProvider(), sms_live=True)
+
+    assert worker._sends is False
+    assert "console" in worker._not_sending_reason
+    assert "'sent'" in worker._not_sending_reason, \
+        "console marks rows sent, not suppressed -- a different trap from SMS_LIVE"

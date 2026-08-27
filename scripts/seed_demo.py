@@ -49,7 +49,7 @@ USERS = [
 # Synthetic on purpose. This used to carry the researcher's real LRN, name and mobile,
 # committed to a public repository; they were scrubbed from the whole history. Put a
 # real number here only in a checkout you are not going to push, or better, leave this
-# alone and set SMS_ALLOWLIST in .env, which is gitignored.
+# alone -- and leave SMS_LIVE=false in .env until you mean it.
 OWNER = {
     "lrn": "999900000018",
     "first": "Demo",
@@ -266,10 +266,10 @@ def _summary(conn, sections: int, students,
         print("!!  consent on file and CAN be texted. Only correct if the school has")
         print("!!  actually collected those forms.")
     else:
-        # The allowlist cannot be relied on here: an empty SMS_ALLOWLIST restricts
-        # nothing, and .env is gitignored, so the client's copy has no allowlist at all.
-        # consent_on_file = 0 is checked in queue.py before anything is enqueued and
-        # travels with the database.
+        # consent_on_file = 0 is what carries this guarantee, and it is the right
+        # place for it: checked in queue.py before anything is enqueued, and travelling
+        # with the database file itself. SMS_LIVE is a per-station switch living in a
+        # gitignored .env, so it says nothing about a database handed to someone else.
         print("\nNo imported student has consent on file, so none of them can be texted.")
         print(f"Only Learner (payload {owner_payload}) can receive SMS.")
         print("Pass --consent once the school has collected the consent forms.")

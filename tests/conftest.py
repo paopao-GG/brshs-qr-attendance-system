@@ -37,13 +37,19 @@ def config():
     did exactly that: every queue test that expected a message to be sent started seeing
     it suppressed instead.
 
-    Tests that care about the allowlist set it explicitly with dataclasses.replace.
+    sms_live is forced ON here for the same reason, in the opposite direction: it
+    defaults to False so that a real station fails towards silence, which would leave
+    every test that expects a send asserting against a suppressed row instead. The suite
+    exercises the sending path; whether the station in front of you is live is not its
+    business.
+
+    Tests that care about the gate set it explicitly with dataclasses.replace.
     """
     import dataclasses
 
     cfg = load_config()
     return dataclasses.replace(
-        cfg, secrets=dataclasses.replace(cfg.secrets, allowlist=())
+        cfg, secrets=dataclasses.replace(cfg.secrets, sms_live=True)
     )
 
 
