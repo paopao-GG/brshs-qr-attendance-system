@@ -21,6 +21,7 @@ Research: [researcher name redacted] · Bicol Regional Science High School, Regi
 | **[analytics-model.md](analytics-model.md)** | Attendance rate, trend regression, absence probability, AHP weighting, composite risk score, band floors |
 | **[sms-notifications.md](sms-notifications.md)** | GSM-module SMS transport, store-and-forward queue, message templates, spend limits, privacy |
 | **[personel-access.md](personel-access.md)** | The records screen: password gate, attendance corrections, roster import, exports |
+| **[updating.md](updating.md)** | Getting a change from the development PC onto the deployed Pi: the standard procedure, and what each kind of change needs on top of it — schema, dependencies, `config.toml`, the roster, a reset, a rollback |
 | **[hardware.md](hardware.md)** | Raspberry Pi 5 station, camera and GSM bring-up, screening procedure metrics. §§1–4, 6, 7, 9, 10 describe a detector the project no longer builds |
 | **[research-plan-review.md](research-plan-review.md)** | Defects found in `RESEARCH-PLANCURRENT.docx`, with fixes, by priority |
 | `RESEARCH-PLANCURRENT.docx` | The research plan itself. Source of record — not modified by these docs |
