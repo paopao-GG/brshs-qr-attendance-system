@@ -3,8 +3,9 @@
 Findings against the current research plan, ordered by how much damage each does if it reaches
 a judge unfixed. **The .docx has not been modified.** This is a fix list.
 
-Reviewed: 2026-08-22 · Document: *Development and Assessment of TRACKIFY* · LEARNER, Demo
-Learner · Bicol Regional Science High School, Region V · Computational Science (Individual)
+Reviewed: 2026-08-22 · Document: *Development and Assessment of TRACKIFY* ·
+[researcher name redacted] · Bicol Regional Science High School, Region V ·
+Computational Science (Individual)
 
 ---
 

@@ -43,9 +43,13 @@ USERS = [
     ("admin",    "admin",    "Administrator"),
 ]
 
-# The researcher's own record. He imports from the sheet like everyone else; this only
-# attaches his own handset as the guardian number and grants the ONE consent in the
-# database, because he is the only person here who has actually given it.
+# The demo record: the ONE student in the database with consent on file, so a live SMS
+# run has exactly one reachable guardian and cannot text a real family by accident.
+#
+# Synthetic on purpose. This used to carry the researcher's real LRN, name and mobile,
+# committed to a public repository; they were scrubbed from the whole history. Put a
+# real number here only in a checkout you are not going to push, or better, leave this
+# alone and set SMS_ALLOWLIST in .env, which is gitignored.
 OWNER = {
     "lrn": "999900000018",
     "first": "Demo",
@@ -168,13 +172,15 @@ def main() -> int:
 
 
 def _grant_owner_consent(conn, section_for) -> sqlite3.Row:
-    """Give the researcher his own number and the only consent in the database.
+    """Create the one student in the database with consent on file.
 
-    He is now imported from the sheet like everyone else -- he has an LRN -- so this
-    updates that row rather than inserting one, which would collide on students.lrn.
-    consent_on_file = 1 is unconditional here and nowhere else: he is the one person
-    who has actually consented, to his own handset, which is what makes a live SMS
-    demo safe to run against a roster of real families.
+    OWNER's LRN is synthetic and matches nobody in the office spreadsheet, so this takes
+    the INSERT branch and adds a row rather than granting consent to a real child. That
+    is the point: consent_on_file = 1 is unconditional here and nowhere else, and it
+    should attach to an invented learner, not to one of the 109 in the sheet.
+
+    It still handles the UPDATE branch, for a checkout where somebody has deliberately
+    pointed OWNER at a real record they control.
     """
     mobile = normalise(OWNER["guardian_mobile"])
     existing = conn.execute("SELECT id FROM students WHERE lrn = ?",
