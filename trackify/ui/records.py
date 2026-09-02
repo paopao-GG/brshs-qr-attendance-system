@@ -565,9 +565,13 @@ class RecordsPage(QWidget):
         root.addWidget(self.status)
 
         self._load_sections()
-        today = Date.today()
-        self.year.setValue(today.year)
-        self.month.setCurrentIndex(today.month - 1)
+        # Default to the month of the most recent attendance row, not the calendar's
+        # current month -- a kiosk not yet opened this month, or a term that ended
+        # weeks ago, would otherwise land on an empty grid every time this page opens.
+        latest = self.conn.execute("SELECT MAX(date) FROM attendance_days").fetchone()[0]
+        default_day = Date.fromisoformat(latest) if latest else Date.today()
+        self.year.setValue(default_day.year)
+        self.month.setCurrentIndex(default_day.month - 1)
         self.refresh()
 
     def _legend_item(self, status: str, label: str) -> QWidget:
@@ -610,20 +614,51 @@ class RecordsPage(QWidget):
     def _load_sections(self) -> None:
         self.section.blockSignals(True)
         self.section.clear()
+        # Same sentinel pattern as roster.py: "All students" first with None as its
+        # data payload, so section_id is None means two different things depending on
+        # context -- see has_sections below, which is what tells them apart.
+        self.section.addItem("All students", None)
+        n = 0
         for row in self.conn.execute(
             "SELECT id, grade_level, name FROM sections ORDER BY grade_level, name"
         ):
             self.section.addItem(f"{row['grade_level']}-{row['name']}", row["id"])
+            n += 1
+        # Default to the first real section, not All students -- existing workflows
+        # (register, SF2, suspend) are per-section and should open exactly as before.
+        if n:
+            self.section.setCurrentIndex(1)
         self.section.blockSignals(False)
 
     @property
     def section_id(self):
         return self.section.currentData()
 
+    @property
+    def has_sections(self) -> bool:
+        """False only when the school has no sections at all.
+
+        section_id is None both when nothing exists yet AND when "All students" is
+        deliberately selected -- this is what tells the two apart, so a guard can say
+        the right thing instead of treating a real choice as an empty database.
+        """
+        return self.section.count() > 1
+
+    @property
+    def all_students_selected(self) -> bool:
+        return self.has_sections and self.section.currentIndex() == 0
+
     def refresh(self) -> None:
-        if self.section_id is None:
+        if not self.has_sections:
             self.status.setText("No sections exist yet.")
             return
+
+        all_students = self.all_students_selected
+        # SF2, the register XLSX and Suspend are all per-section (SF2 in particular is
+        # one DepEd form per class), so they are disabled rather than silently failing
+        # when All students is picked -- the buttons still say why in the status line.
+        for button in (self.btn_export, self.btn_sf2, self.btn_suspend):
+            button.setEnabled(not all_students)
 
         year, month = self.year.value(), self.month.currentData()
         days, rows = corrections.register(self.conn, self.section_id, year, month)
@@ -635,7 +670,11 @@ class RecordsPage(QWidget):
         self.table.setHorizontalHeaderLabels(
             [str(Date.fromisoformat(d).day) for d in days] + ["P", "L", "A", "E", "Rate"]
         )
-        self.table.setVerticalHeaderLabels([r.name for r in rows])
+        # r.section is only populated when section_id is None (see corrections.Row),
+        # so this is a no-op label change for the single-section case.
+        self.table.setVerticalHeaderLabels(
+            [f"{r.section}  {r.name}" if r.section else r.name for r in rows]
+        )
 
         for row_index, row in enumerate(rows):
             for column, day in enumerate(days):
@@ -779,7 +818,11 @@ class RecordsPage(QWidget):
         self.refresh()
 
     def _suspend(self) -> None:
-        if self.section_id is None:
+        if not self.has_sections:
+            return
+        if self.all_students_selected:
+            self.status.setText("Pick a section first -- a suspension excuses one "
+                                "section, not the whole school.")
             return
         dialog = SuspendDialog(self.section.currentText(), self)
         if dialog.exec() != QDialog.Accepted:
@@ -797,7 +840,12 @@ class RecordsPage(QWidget):
         self.status.setText(f"{len(ids)} student(s) excused for {values['day']}.")
 
     def _export(self) -> None:
-        if self.section_id is None:
+        if not self.has_sections:
+            return
+        if self.all_students_selected:
+            self.status.setText("Pick a section first -- the register export is one "
+                                "section's month. Use Export analytics for the whole "
+                                "school.")
             return
         year, month = self.year.value(), self.month.currentData()
         suggested = xlsx.default_filename(self.section.currentText(), year, month)
@@ -824,7 +872,11 @@ class RecordsPage(QWidget):
         what staff read to spot bad data; SF2 carries none of that by design, because
         it is a submission and not a working document.
         """
-        if self.section_id is None:
+        if not self.has_sections:
+            return
+        if self.all_students_selected:
+            self.status.setText("Pick a section first -- SF2 is one DepEd form per "
+                                "class, not a whole-school form.")
             return
         from ..core.config import load_config
         from ..export import sf2 as sf2_export

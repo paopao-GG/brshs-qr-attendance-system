@@ -10,7 +10,7 @@ Companion documents:
 | Document | Covers |
 |---|---|
 | [TDD.md](TDD.md) | Technical Design Document — architecture, data model, module map, interfaces |
-| [prohibited-items.md](prohibited-items.md) | Screening at the gate: outcomes, incidents, custody, why incidents are not weighted |
+| [prohibited-items.md](prohibited-items.md) | Screening at the gate: outcomes, incidents, custody, how incidents are scored in the composite |
 | [personel-access.md](personel-access.md) | The records screen: password gate, corrections, roster import, exports |
 | [hardware.md](hardware.md) | Raspberry Pi 5, camera and GSM bring-up. Its detector sections describe hardware the project no longer builds |
 | [analytics-model.md](analytics-model.md) | Attendance rate, regression, AHP weighting, composite risk score |
@@ -434,7 +434,7 @@ Mapping each feature in research question 1 of the research plan to where it liv
 | Automated attendance **reporting** | §4.3; [personel-access.md](personel-access.md) | Built — the working section register as XLSX, **the DepEd School Form 2 itself** to the geometry of the school's own LIS workbook, plus a six-sheet analytics workbook |
 | Recording of verified prohibited-item incidents in the student's profile | §3 steps 10–14; Rule 1; [prohibited-items.md](prohibited-items.md) | Built — screening outcomes, incidents and the full custody chain. The detector is **a separate device**, so the system records a guard's judgement rather than a sensor reading |
 | SMS notifications to parents/guardians | §3 step 16; §4.1 | Built |
-| Statistical summary of attendance data | §4.3; [analytics-model.md](analytics-model.md) | Built — trend regression, pooled absence model, AHP weights, composite risk with band floors, screening procedure metrics |
+| Statistical summary of attendance data | §4.3; [analytics-model.md](analytics-model.md) | Built — trend regression, pooled absence model, AHP weights, composite risk with an incident floor, screening procedure metrics |
 | Editable reports for excused absence, online participation, class suspension | §4.2; [personel-access.md](personel-access.md) | Built — all four correction types, each superseding rather than overwriting, each audited |
 
 The status column is deliberately part of this table. A traceability matrix that does not say

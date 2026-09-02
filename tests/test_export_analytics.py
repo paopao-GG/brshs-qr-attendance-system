@@ -176,12 +176,16 @@ def test_the_risk_sheet_names_the_kind_of_item(conn, cohort, book):
     assert "folding penknife" not in text,         "RA 10173: the description is the most sensitive field and adds nothing here"
 
 
-def test_the_risk_sheet_says_why_a_band_was_floored(conn, cohort, book):
+def test_the_risk_sheet_reports_the_prohibited_item_score(conn, cohort, book):
+    """Prohibited item is a band floor, not a weighted criterion -- the sheet carries
+    the descriptive I column, the Band source column, and the floor explanation."""
     _incident(conn, cohort[0], severity=4)
     text = text_of(book()["Risk"])
 
-    assert "incident floor (severity 4)" in text
+    assert "Prohibited item I" in text
     assert "Band source" in text
+    assert "incident floor" in text
+    assert "MINIMUM band" in text
 
 
 def test_no_workbook_sheet_carries_an_item_description(conn, cohort, book):
@@ -191,6 +195,44 @@ def test_no_workbook_sheet_carries_an_item_description(conn, cohort, book):
 
     for name in workbook.sheetnames:
         assert "box cutter" not in text_of(workbook[name]), f"leaked on {name}"
+
+
+# --- charts -------------------------------------------------------------------
+
+def test_a_blocked_trend_sheet_gets_no_chart(conn, book):
+    """Matches the numeric-cell rule above: a chart of nothing is worse than none."""
+    sheet = book()["Trend"]
+    assert sheet._charts == []
+
+
+def test_the_trend_sheet_charts_the_daily_rate_with_a_trendline(conn, cohort, book):
+    sheet = book()["Trend"]
+    assert len(sheet._charts) == 1
+    series = sheet._charts[0].series[0]
+    assert series.trendline is not None
+    assert series.trendline.trendlineType == "linear"
+
+
+def test_the_risk_sheet_charts_bands_and_factor_contributions(conn, cohort, book):
+    sheet = book()["Risk"]
+    assert len(sheet._charts) == 2
+
+
+def test_the_screening_sheet_charts_category_and_severity(conn, book):
+    """No incidents recorded is still a valid chart: every category and severity is a
+    key defaulted to 0 (screening.summarise), never an empty dict."""
+    sheet = book()["Screening"]
+    assert len(sheet._charts) == 2
+
+
+def test_no_workbook_chart_title_carries_an_item_description(conn, cohort, book):
+    _incident(conn, cohort[0], description="box cutter")
+    workbook = book()
+
+    for name in workbook.sheetnames:
+        for chart in workbook[name]._charts:
+            title = str(chart.title) if chart.title else ""
+            assert "box cutter" not in title, f"leaked in a chart title on {name}"
 
 
 # --- the AHP sheet ----------------------------------------------------------
@@ -242,20 +284,17 @@ def test_the_screening_sheet_names_no_student(conn, section, make_student, book)
     assert "Coverage" in text
 
 
-def test_the_screening_sheet_says_incidents_are_not_weighted(conn, book):
-    """Both halves, because either alone is misleading.
-
-    "Not scored" was the old wording and is now false: an incident does not enter the
-    composite, but it does set a floor on the band.
-    """
+def test_the_screening_sheet_points_to_the_risk_sheet_for_scoring(conn, book):
+    """Incidents are NOT a weighted term -- the screening sheet says so, stays
+    counts-only, and sends a reader to the Risk sheet for the floor and its detail."""
     text = text_of(book()["Screening"])
-    assert "NOT a weighted term in the composite" in text
-    assert "sets a MINIMUM band" in text
-    assert "0.2212" in text, "the arithmetic, so nobody re-proposes the weighted version"
+    assert "NOT a weighted term" in text
+    assert "MINIMUM band" in text
 
 
 def test_the_screening_sheet_keeps_the_detail_on_the_risk_sheet(conn, book):
-    assert "per-student detail is on the Risk sheet" in text_of(book()["Screening"])
+    assert "per-student detail" in text_of(book()["Screening"])
+    assert "Risk sheet" in text_of(book()["Screening"])
 
 
 # --- scope and naming -------------------------------------------------------

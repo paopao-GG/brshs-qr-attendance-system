@@ -297,24 +297,49 @@ The detail is delivered by a person, to a verified parent, in the school office.
 
 ## 9. Why incidents are not weighted, and what they do instead
 
-The tempting move is to restore incidents as the third AHP criterion, which is what they were
-before the detector was deferred and `early_departure` took the slot.
+This section has gone back and forth once already, and the history matters more than usual
+here because it bears directly on how the study should describe its own method. In order:
 
-**Don't.** Over a 20-day study you may record **zero, one, or two** incidents. A criterion with
-almost no variance contributes noise to the composite risk score, cannot be validated against
-anything, and invites the obvious question of how a weight was derived for something that
-essentially never happened.
+1. **Originally a floor.** Incidents set a minimum band by severity, kept out of the composite
+   entirely.
+2. **Tried as a fourth weighted criterion**, because the research plan's formula literally
+   reads `Risk = w_A·absence + w_T·tardiness + w_E·early_departure + w_I·prohibited_item`. Doing
+   that honestly required a pairwise judgement — "prohibited item vs. absence," on Saaty's
+   scale — that nobody on the real panel had actually made. One was proposed and picked in a
+   working session and saved to `ahp_weights` attributed to the guidance counsellor and
+   discipline officer, which is a fabricated number wearing a real person's name.
+3. **Reverted to a floor.** Fabricating that judgement was worse than deviating from the
+   literal wording of the formula. `ahp.CRITERIA` is three entries again
+   (`absence, tardiness, early_departure`); prohibited item is not one of them.
 
-- Keep `early_departure` as the third criterion. n = 3, so the consistency ratio stays meaningful
-  — a 2×2 matrix is perfectly consistent by construction and the CR check would be vacuous.
+**The formula this codebase implements is therefore three weighted criteria plus a
+severity-keyed band floor, not the research plan's literal four-term sum.** State that
+plainly in the write-up rather than let a reader assume the formula was followed to the
+letter — it is a considered, documented deviation, not an oversight.
+
+### The argument against weighting it
+
+**Don't** restore incidents as an AHP criterion — which is what they were before the metal
+detector was deferred to a separate device and `early_departure` took the slot.
+
+Over a ~20-day study you may record **zero, one, or a handful** of incidents (seven, in this
+study's data). A criterion with almost no variance contributes noise to the composite risk
+score, cannot be validated against anything, and invites the obvious question of how a weight
+was derived for something that essentially never happened.
+
+- Keep `early_departure` as the third criterion. n = 3, so the consistency ratio stays
+  meaningful — a 2×2 matrix is perfectly consistent by construction and the CR check would be
+  vacuous.
 - [analytics-model.md](analytics-model.md) §4's logistic feature *"cumulative confirmed
-  incidents"* should be **dropped from the model** for the same reason. A near-constant-zero
-  predictor is not a predictor, and fitting it then ignoring it is worse than not fitting it.
+  incidents"* stays **dropped from the absence-prediction model** for the same reason. A
+  near-constant-zero predictor is not a predictor, and fitting it then ignoring it is worse than
+  not fitting it.
 
 ### The arithmetic settles it independently
 
-Even setting the variance argument aside, a weighted term **could not have worked**. Through the
-same saturating transform the other criteria use, one incident maps to
+Even setting the variance argument aside, a weighted term **could not have worked** at any
+weight defensible under this formula's own shape. Through the same saturating transform the
+other criteria use, one incident maps to
 
 ```
 1 − exp(−0.25 × 1) = 0.2212          Monitor starts at 0.30
@@ -343,9 +368,10 @@ does not apply to it. There is no coefficient to defend, nothing to validate, an
 anybody has to justify. The cutoffs live in `config.toml` under `[risk.incident_floor]` and are
 the school's to set, like the band boundaries themselves.
 
-The Risk sheet carries the count, the categories, the maximum severity, and a **`Band source`**
-column naming which rule decided the band. Without that last column a stored *High* against a
-0.06 composite reads as an arithmetic error.
+The Risk sheet carries the count, the categories, the maximum severity, a descriptive
+`Prohibited item I` score (`max_severity / 4`, for context only — it does not feed the composite
+or the band), and a **`Band source`** column naming which rule decided the band. Without that
+last column a stored *High* against a 0.06 composite reads as an arithmetic error.
 
 - Report incidents **descriptively** in the aggregate: counts by category and severity, and the
   confirmation rate. The Screening sheet stays counts-only — see §8. Per-student detail belongs

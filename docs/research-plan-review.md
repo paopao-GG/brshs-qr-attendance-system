@@ -133,7 +133,20 @@ hand with extra steps.
   becomes meaningful. Worked example in [analytics-model.md](analytics-model.md) §5.
 
 
-**RESOLVED.** The panel was convened and the judgements recorded: `ahp_weights` version 1, elicited from the guidance counsellor and discipline officer, 27 August 2026, with a consistency ratio of **0.0212** (well inside the 0.10 limit). The matrix and the derivation are in [analytics-model.md](analytics-model.md) §5.1, and every export now names the source instead of warning that the weights are a placeholder.
+**RESOLVED.** The panel was convened for **three** criteria: `ahp_weights` version 1, elicited
+from the guidance counsellor and discipline officer, 27 August 2026, CR = **0.0212**. This is
+the matrix in force.
+
+A four-criterion version was briefly tried — weighting prohibited item as a fourth AHP
+criterion instead of using it as a band floor, per the research plan's literal formula (see
+item 7 and [prohibited-items.md](prohibited-items.md) §9). Doing that honestly needed a fourth
+pairwise judgement ("prohibited item vs. absence") that nobody on the real panel had actually
+made; a proposed value was saved as `ahp_weights` version 2 regardless, attributed to the
+panel's names. That is fabricated data, not a resolved elicitation, and it was reverted the
+same day: `ahp.CRITERIA` is three entries again, version 1 is active, and version 2's row stays
+in the table only as a record of what was tried and undone. **The formula this codebase
+implements is therefore three AHP-weighted criteria plus a severity-keyed band floor, a
+considered deviation from the plan's literal four-term sum** — see item 7.
 
 ---
 
@@ -147,6 +160,11 @@ directly, the count term dominates and the weights become decorative.
 [analytics-model.md](analytics-model.md) §6, which uses saturating exponentials rather than
 min–max — min–max is unstable because a single outlier rescales the entire cohort and destroys
 comparability across sections and over time.
+
+The formula's fourth term, prohibited item, is not part of this weighted sum at all — see item
+6 above and [analytics-model.md](analytics-model.md) §6–§7. It is a band floor instead, keyed
+to severity, which sidesteps the units question by not entering the composite in the first
+place.
 
 ---
 

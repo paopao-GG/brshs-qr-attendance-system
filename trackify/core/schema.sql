@@ -161,12 +161,16 @@ CREATE TABLE IF NOT EXISTS risk_scores (
     p_absent              REAL    NOT NULL,
     tardiness_score       REAL    NOT NULL,
     early_departure_score REAL    NOT NULL,
+    -- The fourth weighted criterion: worst confirmed incident's severity / 4. Defaulted
+    -- because rows persisted before this column existed had no such term -- they scored
+    -- on three criteria, which is what they were. See docs/prohibited-items.md section 9.
+    prohibited_item_score REAL    NOT NULL DEFAULT 0,
     composite             REAL    NOT NULL,
     band                  TEXT    NOT NULL,
-    -- Confirmed prohibited-item incidents, and which rule decided the band. Without
-    -- band_source a stored 'High' cannot be explained later: the composite alone would
-    -- not account for it, because an incident floor raises the band without touching
-    -- the score. See docs/prohibited-items.md section 9.
+    -- Confirmed prohibited-item incidents, descriptive only -- prohibited_item_score
+    -- above is what enters the composite. band_source records how a row's band was
+    -- decided; historical rows may read 'incident floor (severity N)' from before
+    -- incidents became a weighted term, new rows always read 'composite'.
     incidents             INTEGER NOT NULL DEFAULT 0,
     band_source           TEXT    NOT NULL DEFAULT 'composite',
     weights_version       INTEGER REFERENCES ahp_weights(version)

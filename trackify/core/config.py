@@ -101,8 +101,8 @@ class ScreeningConfig:
 
 
 # Minimum band a confirmed prohibited-item incident forces, indexed by severity 1-4.
-# Not a weighted criterion: one incident saturates to 0.2212, below the 0.30 Monitor
-# cutoff, so no weight that sums to 1 with the others could raise a band on its own.
+# Not a weighted criterion: over a short study there are too few incidents to fit or
+# defend a weight for one, and a floor needs no coefficient anyone has to justify.
 # See docs/prohibited-items.md section 9.
 DEFAULT_INCIDENT_FLOOR = ("Monitor", "Monitor", "Elevated", "High")
 
@@ -203,7 +203,6 @@ def _flag(raw: str) -> bool:
     return raw.strip().lower() in _TRUTHY
 
 
-
 def _incident_floor(section) -> tuple[str, str, str, str]:
     """[risk.incident_floor] as severity_1..severity_4, defaulted per level.
 
@@ -215,6 +214,7 @@ def _incident_floor(section) -> tuple[str, str, str, str]:
         section.get(f"severity_{level}", DEFAULT_INCIDENT_FLOOR[level - 1])
         for level in (1, 2, 3, 4)
     )
+
 
 def load_config(path: Path | None = None) -> Config:
     path = path or DEFAULT_CONFIG

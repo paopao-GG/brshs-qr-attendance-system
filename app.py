@@ -24,6 +24,7 @@ from trackify.core import db
 from trackify.core.config import load_config
 from trackify.core.service import ScanService
 from trackify.ui.kiosk import KioskWindow
+from trackify.ui.splash import SplashScreen
 from trackify.ui.worker import SmsWorker
 
 STYLE = Path(__file__).parent / "trackify" / "ui" / "style.qss"
@@ -102,6 +103,12 @@ def main(argv=None) -> int:
     service = ScanService(conn, config)
 
     window = KioskWindow(service, windowed=args.windowed)
+    # A CHILD of the window, so it is the app's own position and size rather than a
+    # second top-level window the window manager places wherever it likes. Created
+    # before the first paint -- nothing here enters the event loop until app.exec()
+    # below -- so the kiosk never shows for a frame before the splash covers it. Only
+    # the scan station gets one; --custody is a different desk, not the public screen.
+    splash = SplashScreen(window)
 
     # --- SMS worker on its own thread -------------------------------------
     # The kiosk has to open in the morning whatever the hardware is doing. A provider
@@ -138,10 +145,21 @@ def main(argv=None) -> int:
 
     app.aboutToQuit.connect(shutdown)
 
+    def reveal_kiosk() -> None:
+        # Deferred to here rather than started under the splash: camera.py documents
+        # that a QGraphicsVideoItem's native surface composites above ordinary Qt
+        # content, so starting it only once the splash is gone sidesteps the question
+        # of what that does to a widget fading out on top of it.
+        window.start_camera()
+
+    splash.finished.connect(reveal_kiosk)
+    # The window is shown HERE, not after the fade. The splash is a child of it, and a
+    # child cannot be visible while its parent is hidden -- showing the window only in
+    # reveal_kiosk() meant the splash painted into a hidden parent and nobody ever saw
+    # the startup screen. Nothing above enters the event loop, so the kiosk does not
+    # get a frame of its own before the splash covers it.
     window.show()
-    # After show(), so a camera that takes a second to warm up does so behind an
-    # already-visible screen rather than a blank one.
-    window.start_camera()
+    splash.start()
     return app.exec()
 
 

@@ -52,7 +52,7 @@ def answer(qtbot, kiosk, button=None):
 
 
 def test_starts_in_waiting_state(kiosk):
-    assert kiosk.stage.property("state") == "neutral"
+    assert kiosk.stage.property("state") == "waiting"
     assert kiosk.waiting.isVisible()
     assert not kiosk.result.isVisible()
 
@@ -108,6 +108,18 @@ def test_garbage_shows_misfire_not_unknown(qtbot, kiosk):
     assert kiosk.headline.text() == "Scan not read"
 
 
+def test_a_misfire_result_is_not_the_waiting_state(qtbot, kiosk):
+    """The two must stay separate. "waiting" is transparent so media/scan.jpg shows
+    through at full strength, and that page carries dark ink; a MISFIRE is a RESULT,
+    with light text, so it needs the opaque "neutral" ground. Collapse them and the
+    result view puts light text on a pale photograph."""
+    scan(qtbot, kiosk, "asdfgh")
+
+    assert kiosk.result.isVisible()
+    assert kiosk.stage.property("state") == "neutral"
+    assert kiosk.stage.property("state") != "waiting"
+
+
 def test_empty_input_ignored(qtbot, kiosk):
     scan(qtbot, kiosk, "")
     assert kiosk.waiting.isVisible()
@@ -129,7 +141,7 @@ def test_screen_returns_to_waiting(qtbot, kiosk, student):
     kiosk._reset_timer.stop()
     kiosk._show_waiting()
     assert kiosk.waiting.isVisible()
-    assert kiosk.stage.property("state") == "neutral"
+    assert kiosk.stage.property("state") == "waiting"
 
 
 def test_input_stays_focused_after_scan(qtbot, kiosk, student):

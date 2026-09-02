@@ -210,3 +210,60 @@ def test_the_migrated_column_enforces_the_same_two_values(db_without_sex):
                    sex, created_at)
                VALUES ('136584120002', 'Ana', 'Reyes', 1, 'X', '2026-08-01')"""
         )
+
+
+# --- risk_scores.prohibited_item_score, added when the composite absorbed the -----
+# incident floor as a fourth weighted term ------------------------------------------
+
+V1_RISK_SCORES = """
+CREATE TABLE risk_scores (
+    id                    INTEGER PRIMARY KEY,
+    student_id            INTEGER NOT NULL,
+    computed_at           TEXT    NOT NULL,
+    p_absent              REAL    NOT NULL,
+    tardiness_score       REAL    NOT NULL,
+    early_departure_score REAL    NOT NULL,
+    composite             REAL    NOT NULL,
+    band                  TEXT    NOT NULL,
+    incidents             INTEGER NOT NULL DEFAULT 0,
+    band_source           TEXT    NOT NULL DEFAULT 'composite',
+    weights_version       INTEGER
+)
+"""
+
+
+@pytest.fixture
+def db_without_item_score(tmp_path):
+    conn = sqlite3.connect(tmp_path / "prefourth.db", isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    conn.execute(V1_RISK_SCORES)
+    conn.execute(
+        """INSERT INTO risk_scores (student_id, computed_at, p_absent, tardiness_score,
+               early_departure_score, composite, band, incidents, band_source)
+           VALUES (1, '2026-08-20T07:00:00', 0.1, 0.0, 0.0, 0.06, 'Low', 1,
+                   'incident floor (severity 4)')"""
+    )
+    return conn
+
+
+def test_prohibited_item_score_reaches_a_database_that_predates_it(db_without_item_score):
+    assert "prohibited_item_score" not in {
+        r["name"] for r in db_without_item_score.execute("PRAGMA table_info(risk_scores)")
+    }
+    db.init_db(db_without_item_score)
+    assert "prohibited_item_score" in {
+        r["name"] for r in db_without_item_score.execute("PRAGMA table_info(risk_scores)")
+    }
+
+
+def test_existing_rows_read_back_as_scored_on_three_criteria(db_without_item_score):
+    """Which is exactly what they were: a row from before the fourth term existed
+    scored on absence, tardiness and early departure alone. Defaulting to 0 keeps that
+    composite's meaning rather than retroactively implying 'no incident.'"""
+    db.init_db(db_without_item_score)
+    row = db_without_item_score.execute(
+        "SELECT prohibited_item_score, band_source FROM risk_scores").fetchone()
+    assert row["prohibited_item_score"] == 0
+    assert row["band_source"] == "incident floor (severity 4)", (
+        "a historical band_source is left as recorded, not rewritten"
+    )

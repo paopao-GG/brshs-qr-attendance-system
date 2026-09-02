@@ -17,8 +17,8 @@ Research: [researcher name redacted] · Bicol Regional Science High School, Regi
 |---|---|
 | **[TDD.md](TDD.md)** | Technical Design Document — architecture, data model, module map, interfaces, deployment. **Start here if you are reading the code.** |
 | **[flow.md](flow.md)** | System flow — actors, entry process, exception paths, records written. **Start here if you are reading the design.** |
-| **[prohibited-items.md](prohibited-items.md)** | Screening at the gate: outcomes, incidents, custody chain, why incidents are not weighted |
-| **[analytics-model.md](analytics-model.md)** | Attendance rate, trend regression, absence probability, AHP weighting, composite risk score, band floors |
+| **[prohibited-items.md](prohibited-items.md)** | Screening at the gate: outcomes, incidents, custody chain, why incidents are reported descriptively rather than scored |
+| **[analytics-model.md](analytics-model.md)** | Attendance rate, trend regression, absence probability, AHP weighting, the composite risk score and incident floor, bands |
 | **[sms-notifications.md](sms-notifications.md)** | GSM-module SMS transport, store-and-forward queue, message templates, spend limits, privacy |
 | **[personel-access.md](personel-access.md)** | The records screen: password gate, attendance corrections, roster import, exports |
 | **[updating.md](updating.md)** | Getting a change from the development PC onto the deployed Pi: the standard procedure, and what each kind of change needs on top of it — schema, dependencies, `config.toml`, the roster, a reset, a rollback |
@@ -63,7 +63,7 @@ Stated in full in [flow.md](flow.md) §2. In short:
 | Notification gate | `consent_on_file`, checked at enqueue. No consent, no message, whatever the policy says | [sms-notifications.md](sms-notifications.md) §6 |
 | Absence prediction | Logistic regression — a linear model cannot output a probability | [analytics-model.md](analytics-model.md) §3–4 |
 | Risk normalisation | Saturating exponentials, not min–max: one extreme student must not rescale everyone else | [analytics-model.md](analytics-model.md) §6 |
-| Prohibited items in risk | A **floor on the band**, not a weighted criterion. One incident saturates to 0.2212 against a 0.30 cutoff, so no weight summing to 1 could ever raise a band | [prohibited-items.md](prohibited-items.md) §9 |
+| Prohibited items in risk | **Not a weighted criterion.** A confirmed incident sets a MINIMUM band by severity, keyed off `config.toml [risk.incident_floor]`; it raises the band and leaves the composite untouched. A weighted 4th criterion was tried and reverted — it needed a pairwise judgement nobody on the real panel had made | [prohibited-items.md](prohibited-items.md) §9 |
 | Risk coverage | Scored for everyone, acted on above threshold | [analytics-model.md](analytics-model.md) §8 |
 
 ---

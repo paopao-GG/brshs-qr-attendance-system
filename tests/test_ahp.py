@@ -116,6 +116,29 @@ def test_elicited_weights_carry_no_caveat(conn):
     assert ahp.active(conn).caveat == ""
 
 
+def test_a_matrix_sized_for_a_different_criteria_set_falls_back_rather_than_raising(conn):
+    """A 4x4 elicited while prohibited_item was briefly a fourth criterion cannot be
+    zipped against 3 fields -- active() has to fall back to the placeholder rather
+    than crash on a database that still has that row."""
+    import json
+
+    stale = ((1, 5, 4, 1 / 5), (1 / 5, 1, 1 / 2, 1 / 9),
+             (1 / 4, 2, 1, 1 / 9), (5, 9, 9, 1))
+    conn.execute(
+        """INSERT INTO ahp_weights
+           (version, matrix_json, weights_json, lambda_max, ci, cr,
+            elicited_from, elicited_at, active)
+           VALUES (1, ?, '{}', 0, 0, 0, 'old panel', '2026-01-01', 1)""",
+        (json.dumps(stale),),
+    )
+
+    w = ahp.active(conn)
+
+    assert w.elicited is False
+    assert w.stale_criteria is True
+    assert "different number of criteria" in w.caveat
+
+
 def test_the_active_weights_survive_a_round_trip(conn):
     saved = ahp.save(conn, ahp.DOCUMENTED_MATRIX, elicited_from="the panel")
     loaded = ahp.active(conn)

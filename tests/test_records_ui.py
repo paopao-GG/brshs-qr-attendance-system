@@ -473,3 +473,56 @@ def test_the_legend_hides_on_the_edit_log(page):
 def test_the_heading_names_the_section_and_month(page):
     assert "September 2026" in page.subtitle.text()
     assert "7-Rizal" in page.subtitle.text()
+
+
+# --- all students -------------------------------------------------------------
+
+def test_all_students_is_the_first_item_but_not_the_default(page):
+    """The sentinel sits at index 0 so a fresh combo defaults sanely elsewhere (see
+    roster.py's identical pattern), but this page opens on a real section -- existing
+    single-section workflows should look untouched on first load."""
+    assert page.section.itemText(0) == "All students"
+    assert page.section.itemData(0) is None
+    assert page.section.currentIndex() == 1
+    assert page.section.currentText() == "7-Rizal"
+
+
+def test_selecting_all_students_lists_every_section(qtbot, page, conn, make_student):
+    other = conn.execute(
+        "INSERT INTO sections (name, grade_level) VALUES ('Bonifacio', 8)"
+    ).lastrowid
+    conn.execute(
+        """INSERT INTO students
+           (lrn, first_name, last_name, section_id, guardian_name,
+            guardian_mobile, consent_on_file, created_at)
+           VALUES ('136584129999', 'Ana', 'Reyes', ?, 'Maria', '639171234567', 1, ?)""",
+        (other, "2026-01-01T00:00:00"),
+    )
+
+    page.section.setCurrentIndex(0)
+
+    assert page.all_students_selected is True
+    assert page.section_id is None
+    labels = [page.table.verticalHeaderItem(r).text() for r in range(page.table.rowCount())]
+    assert any("Reyes" in label for label in labels)
+    assert any("Dela Cruz" in label for label in labels)
+
+
+def test_all_students_disables_the_per_section_exports(page):
+    page.section.setCurrentIndex(0)
+
+    assert not page.btn_export.isEnabled()
+    assert not page.btn_sf2.isEnabled()
+    assert not page.btn_suspend.isEnabled()
+
+    page.section.setCurrentIndex(1)
+
+    assert page.btn_export.isEnabled()
+    assert page.btn_sf2.isEnabled()
+    assert page.btn_suspend.isEnabled()
+
+
+def test_suspend_refuses_all_students_with_a_reason(page):
+    page.section.setCurrentIndex(0)
+    page._suspend()
+    assert "one section" in page.status.text()

@@ -73,8 +73,14 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     "students": {"sex": "TEXT CHECK (sex IS NULL OR sex IN ('M', 'F'))"},
     # NOT NULL needs a non-null default for ALTER TABLE ADD COLUMN; existing rows read
     # back as an unfloored composite, which is what they were.
+    #
+    # prohibited_item_score defaults to 0: a row from before the composite absorbed
+    # prohibited item as a fourth weighted term scored on three criteria, which is what
+    # it was, and 0 keeps that composite's meaning rather than retroactively implying
+    # "no incident."
     "risk_scores": {"incidents": "INTEGER NOT NULL DEFAULT 0",
-                    "band_source": "TEXT NOT NULL DEFAULT 'composite'"},
+                    "band_source": "TEXT NOT NULL DEFAULT 'composite'",
+                    "prohibited_item_score": "REAL NOT NULL DEFAULT 0"},
 }
 
 

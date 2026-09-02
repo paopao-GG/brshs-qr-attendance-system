@@ -155,25 +155,25 @@ Three, not two:
 2. **Tardiness** — accumulated lateness
 3. **Early departure** — accumulated departures before the cutoff
 
-> **The third criterion is early departure, not prohibited-item incidents.** Earlier drafts of
-> this section named incidents, from before the metal detector became a separate device.
-> [prohibited-items.md](prohibited-items.md) §9 settles it: over a 20-day study you may record
-> zero, one or two incidents, and a criterion with almost no variance contributes noise to the
-> composite, cannot be validated against anything, and invites the obvious question of how a
-> weight was derived for something that essentially never happened. Incidents are reported
-> **descriptively** instead — counts by category and severity, and the confirmation rate.
+> **Prohibited item is deliberately not a fourth criterion.** It was tried as one, briefly —
+> the research plan's formula literally reads `Risk = w_A·absence + w_T·tardiness +
+> w_E·early_departure + w_I·prohibited_item`. Doing that honestly required a pairwise
+> judgement ("prohibited item vs. absence") that nobody on the real panel had actually made;
+> one was proposed and saved to `ahp_weights` attributed to the guidance counsellor and
+> discipline officer regardless, which is a fabricated number wearing a real person's name.
+> [prohibited-items.md](prohibited-items.md) §9 has the full three-act history and the
+> arithmetic argument for why a weight could not have worked well even if the judgement had
+> been real; §6 and §7 below cover what prohibited item does instead — a severity-keyed band
+> floor.
 >
-> The schema agrees: `risk_scores.early_departure_score`, and `nu_early_departure` in
-> `config.toml`.
->
-> Incidents are not ignored, though. A confirmed one sets a **floor on the band** (§7) —
-> a policy rule with no weight to derive, which is why the objection above does not apply
-> to it.
+> **This means the implemented formula deviates from the research plan's literal wording**:
+> three weighted criteria plus a policy rule, not a four-term weighted sum. State that
+> explicitly in the write-up.
 
 > **Use three criteria, not two.** A 2×2 pairwise matrix is *always* perfectly consistent —
 > CR = 0 by construction, no matter what numbers you enter. With only two criteria the
-> consistency check is vacuous and the AHP adds nothing over just picking two weights. At n = 3
-> the check becomes real.
+> consistency check is vacuous and the AHP adds nothing over just picking two weights. At
+> n = 3 the check becomes real.
 
 ### Who supplies the judgements
 
@@ -234,6 +234,13 @@ w_A = 0.6833    w_T = 0.1168    w_E = 0.1998        (Σ = 1.0000 ✓)
 Absence dominates, which is both what a school ranks first and what this study is about. The
 consistency ratio is 0.0212 — comfortably coherent, and a stronger result than the example's
 0.0559.
+
+A four-criterion version of this matrix (adding prohibited item) was briefly saved as version 2
+on 2 September 2026 — its fourth comparison was a working proposal, not a judgement the panel
+had actually made, saved under their name regardless. It was retired the same day when the
+fourth criterion itself was reverted to a band floor — see the box above and
+[prohibited-items.md](prohibited-items.md) §9. Version 2's row stays in `ahp_weights` as a
+record of what was tried and why it was undone; version 1 is active again.
 
 **These live in the database, not in the code.** `scripts/seed_demo.py --reset` clears
 `ahp_weights` along with everything else, so a reseed drops back to the placeholder. To put
@@ -421,15 +428,10 @@ one, and it leaves the composite untouched.
 | 4 | bladed, or blunt impact | High |
 
 `config.toml` → `[risk.incident_floor]`, and like the cutoffs above these are the school's to
-set. The Risk sheet reports the count, the categories, the maximum severity and a **`Band
-source`** column saying which rule applied — without it a *High* against a 0.06 composite reads
-as an arithmetic error.
-
-> **Why the adopted weights of §5.1 mattered.** Under the illustrative matrix the largest
-> reachable composite was `0.1884 + 0.0810 = 0.2694`, below the 0.30 cutoff, so **no student
-> could leave Low by any combination of absence and lateness** — the floor was the only thing
-> that could flag anyone. With absence weighted at 0.6833 the score does its own work again:
-> a student absent every day reaches 0.68 and lands in Elevated on the composite alone.
+set. The Risk sheet reports the count, the categories, the maximum severity, a descriptive
+`Prohibited item I` score (`max_severity / 4`, context only — it does not enter the composite
+or the band) and a **`Band source`** column saying which rule applied — without it a *High*
+against a 0.06 composite reads as an arithmetic error.
 
 The score **recommends review. It never imposes a sanction.** A person decides in every case —
 the same principle as Rule 1 in [flow.md](flow.md).

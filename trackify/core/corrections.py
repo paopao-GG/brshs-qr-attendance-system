@@ -137,6 +137,9 @@ class Row:
     late: int
     absent: int
     excused: int
+    # Populated only when register() is called across every section (section_id=None):
+    # "Name" alone is ambiguous once two sections can share the vertical header.
+    section: str = ""
 
     @property
     def eligible(self) -> int:
@@ -352,27 +355,38 @@ def month_days(year: int, month: int) -> list[str]:
 
 
 def register(
-    conn: sqlite3.Connection, section_id: int, year: int, month: int
+    conn: sqlite3.Connection, section_id: int | None, year: int, month: int
 ) -> tuple[list[str], list[Row]]:
-    """One section's month: (dates, rows). Live rows only, superseded ones excluded."""
+    """One section's month, or every section's when section_id is None.
+
+    Live rows only, superseded ones excluded. section_id=None is "All students" in the
+    Records page -- the predicate is simply omitted, the same conditional-SQL shape
+    risk._history and trend.daily_rates already use for the same reason.
+    """
     days = month_days(year, month)
     first, last = days[0], days[-1]
 
-    students = conn.execute(
-        """SELECT id, first_name, last_name FROM students
-           WHERE section_id = ? AND active = 1
-           ORDER BY last_name, first_name""",
-        (section_id,),
-    ).fetchall()
+    student_sql = ["""SELECT s.id, s.first_name, s.last_name,
+                             sec.grade_level, sec.name AS section_name
+                      FROM students s JOIN sections sec ON sec.id = s.section_id
+                      WHERE s.active = 1"""]
+    student_params: list = []
+    if section_id is not None:
+        student_sql.append("AND s.section_id = ?")
+        student_params.append(section_id)
+    student_sql.append("ORDER BY sec.grade_level, sec.name, s.last_name, s.first_name")
+    students = conn.execute(" ".join(student_sql), student_params).fetchall()
+
+    attendance_sql = ["""SELECT a.* FROM attendance_days a
+                         JOIN students s ON s.id = a.student_id
+                         WHERE a.date BETWEEN ? AND ? AND a.superseded_by IS NULL"""]
+    attendance_params: list = [first, last]
+    if section_id is not None:
+        attendance_sql.append("AND s.section_id = ?")
+        attendance_params.append(section_id)
 
     records: dict[tuple[int, str], sqlite3.Row] = {}
-    for row in conn.execute(
-        """SELECT a.* FROM attendance_days a
-           JOIN students s ON s.id = a.student_id
-           WHERE s.section_id = ? AND a.date BETWEEN ? AND ?
-             AND a.superseded_by IS NULL""",
-        (section_id, first, last),
-    ):
+    for row in conn.execute(" ".join(attendance_sql), attendance_params):
         records[(row["student_id"], row["date"])] = row
 
     rows: list[Row] = []
@@ -406,6 +420,8 @@ def register(
             late=counts["late"],
             absent=counts["absent"],
             excused=counts["excused"],
+            section=(f"{student['grade_level']}-{student['section_name']}"
+                     if section_id is None else ""),
         ))
     return days, rows
 

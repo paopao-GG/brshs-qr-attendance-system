@@ -184,8 +184,8 @@ as a blank box, and the gate cannot afford an unreadable button.
 
 ### `trackify/analytics/` and `trackify/export/`
 
-`trend.py` (OLS on daily rates, Durbin–Watson), `risk.py` (pooled logistic model, composite,
-bands, incident floor), `ahp.py` (weights and the consistency check), `screening.py`
+`trend.py` (OLS on daily rates, Durbin–Watson), `risk.py` (pooled logistic model, the
+composite and the incident floor, bands), `ahp.py` (weights and the consistency check), `screening.py`
 (descriptive counts). Read-only over the database except `risk.compute(persist=True)`.
 `export/xlsx.py` writes the SF2-*shaped* working register (letters, corrections shading, a
 per-student rate); `export/sf2.py` writes the DepEd form itself, to the geometry of the LIS
@@ -211,10 +211,11 @@ changed *after* 103 cards had been printed, and the change is what made those ca
 lets one extreme student set the maximum and silently rescale everyone else, so scores could
 not be compared across sections or across time — which would destroy any longitudinal claim.
 
-**Prohibited items floor the band; they are not a weighted criterion.** One incident maps to
-0.2212 and Monitor starts at 0.30, so raising a band on a single incident would need a weight
-of 1.356 when the weights sum to 1. A student found with a bladed weapon would have read "Low"
-however the panel weighted it. See [prohibited-items.md](prohibited-items.md) §9.
+**Prohibited item is a band floor, not a weighted criterion.** A confirmed incident sets a
+minimum band by severity (`config.toml [risk.incident_floor]`) and leaves the composite
+untouched. A weighted fourth criterion was tried and reverted -- it needed a pairwise judgement
+nobody on the real panel had actually made, over too few incidents to fit or defend a weight for
+either -- see [prohibited-items.md](prohibited-items.md) §9.
 
 **At-most-once SMS.** An ambiguous send — the module going silent after the message body is
 written — is parked as `unknown` and **never auto-retried**. A missed text is recoverable; a
@@ -229,8 +230,8 @@ copy of the database. Neither substitutes for the other. See
 [sms-notifications.md](sms-notifications.md) §7.
 
 **Every threshold is configuration.** Late time, dismissal, saturation constants, band cutoffs,
-the incident floor, absence limits. A band boundary decides whether a real child is referred to
-guidance; that is an institutional decision, and the export says who made it.
+absence limits. A band boundary decides whether a real child is referred to guidance; that is
+an institutional decision, and the export says who made it.
 
 ---
 

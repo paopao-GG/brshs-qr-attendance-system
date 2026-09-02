@@ -278,6 +278,40 @@ def test_the_register_ignores_superseded_rows(conn, present, section):
     assert rows[0].present == 0
 
 
+# --- all students, section_id=None -------------------------------------------
+
+def test_register_with_no_section_covers_every_section(conn, present, section,
+                                                        make_student):
+    """section_id=None is "All students" in the Records page: every live section's
+    roster, not an error and not an empty one."""
+    other = conn.execute(
+        "INSERT INTO sections (name, grade_level) VALUES ('Bonifacio', 8)"
+    ).lastrowid
+    conn.execute(
+        """INSERT INTO students
+           (lrn, first_name, last_name, section_id, guardian_name,
+            guardian_mobile, consent_on_file, created_at)
+           VALUES ('136584129999', 'Ana', 'Reyes', ?, 'Maria', '639171234567', 1, ?)""",
+        (other, "2026-01-01T00:00:00"),
+    )
+
+    _, rows = corrections.register(conn, None, 2026, 9)
+
+    names = {r.name for r in rows}
+    assert "Dela Cruz, Juan" in names           # from the `present` fixture's section
+    assert "Reyes, Ana" in names                # from the second section
+
+
+def test_register_with_no_section_labels_each_row_by_its_section(conn, present, section):
+    """r.section is blank in the single-section call -- it only exists to disambiguate
+    an All-students grid, where "Dela Cruz, Juan" alone would not say which one."""
+    _, single = corrections.register(conn, section, 2026, 9)
+    assert single[0].section == ""
+
+    _, every = corrections.register(conn, None, 2026, 9)
+    assert every[0].section == "7-Rizal"
+
+
 def test_a_plain_string_type_is_accepted(conn, present):
     """CorrectionType subclasses str, and anything round-tripped through a Qt variant
     -- a combo box's userData, for one -- comes back as a bare str. An identity check

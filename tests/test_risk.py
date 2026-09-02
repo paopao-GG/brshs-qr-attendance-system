@@ -70,8 +70,8 @@ def test_one_extreme_student_cannot_rescale_anyone_else():
 # --- the composite ----------------------------------------------------------
 
 def test_the_documented_composite_reproduces(config):
-    """Section 6, recomputed for early departure as the third criterion: P = 0.42,
-    3 tardies, 2 early departures, against the documented weights."""
+    """Section 6's worked example: P = 0.42, 3 tardies, 2 early departures, against
+    the documented weights."""
     weights = ahp.derive(ahp.DOCUMENTED_MATRIX)
     t = risk.saturating(3, config.risk.mu_tardiness)
     e = risk.saturating(2, config.risk.nu_early_departure)
@@ -262,8 +262,10 @@ def test_band_counts_are_summarised(conn, make_student, config):
 
 # --- prohibited-item incidents ----------------------------------------------
 #
-# A floor on the band, never a term in the composite. The reason is arithmetic and is
-# asserted below: a weighted term could not have raised a band at all.
+# A floor on the band, not a fourth weighted criterion -- see the module docstring
+# and docs/prohibited-items.md section 9 for why: weighting it would need a pairwise
+# judgement nobody on the real panel has actually made, over too few incidents to fit
+# or defend a weight for either.
 
 
 def incident(conn, student_id, *, severity=4, category="bladed",
@@ -286,12 +288,28 @@ def incident(conn, student_id, *, severity=4, category="bladed",
         (student_id, event, f"{day}T07:05:00", category, description, severity))
 
 
+@pytest.mark.parametrize("severity,expected", [
+    (0, 0.0), (1, 0.25), (2, 0.5), (3, 0.75), (4, 1.0),
+])
+def test_prohibited_item_scales_severity_to_zero_one(severity, expected):
+    """Descriptive only -- see prohibited_item()'s docstring. Does not feed the
+    composite or the band; floor_for/worst_of use max_severity directly instead."""
+    assert risk.prohibited_item(severity) == expected
+
+
+def test_prohibited_item_clamps_an_out_of_range_severity():
+    """max_severity is a MAX() over confirmed incidents so it cannot exceed 4 in
+    practice -- the schema CHECKs it -- but the clamp is the guarantee, not the schema."""
+    assert risk.prohibited_item(9) == 1.0
+    assert risk.prohibited_item(-1) == 0.0
+
+
 def test_a_weighted_term_could_not_have_reached_monitor(config):
     """Why this is a floor and not a fourth AHP criterion.
 
     One incident through the usual saturating transform is 0.2212, and Monitor starts
     at 0.30. Reaching Monitor on one incident alone would need a weight of 1.356 -- and
-    weights sum to 1. A student found with a bladed weapon would still have read "Low"
+    weights sum to 1. A student found with a bladed weapon would still have read Low
     however the panel weighted it.
     """
     one = risk.saturating(1, config.risk.nu_early_departure)
@@ -325,6 +343,7 @@ def test_a_clean_record_is_still_low(conn, make_student, config):
     row = risk.compute(conn, config).rows[0]
     assert row.band == "Low"
     assert row.n_incidents == 0
+    assert row.item_score == 0.0
     assert row.band_source == risk.COMPOSITE
 
 
@@ -337,7 +356,8 @@ def test_a_floor_never_lowers_a_band(config):
 
 
 def test_the_composite_is_not_changed_by_an_incident(conn, make_student, config):
-    """The score keeps meaning what it meant. Only the band moves."""
+    """The score keeps meaning what it meant. Only the band moves -- item_score is
+    reported for context but does not feed the composite either."""
     a = make_student()
     for index in range(1, 4):
         record(conn, a, day(index), "late")
@@ -346,8 +366,27 @@ def test_the_composite_is_not_changed_by_an_incident(conn, make_student, config)
     incident(conn, a, severity=4)
     after = risk.compute(conn, config).rows[0]
 
+    assert after.item_score == 1.0
     assert after.composite == before.composite
     assert after.band == "High" and before.band == "Low"
+
+
+def test_the_worst_incident_drives_item_score_not_the_count(conn, make_student, config):
+    """Ten confiscated compasses must not outscore one -- item_score is
+    max_severity / 4, not a saturating function of the count. Descriptive only, but the
+    same principle applies to the floor: worst_of/floor_for read max_severity, not n."""
+    a = make_student()
+    record(conn, a, day(1), "present")
+    incident(conn, a, severity=1, category="tool", day="2026-09-02")
+
+    one = risk.compute(conn, config).rows[0]
+
+    incident(conn, a, severity=1, category="tool", day="2026-09-03")
+    two = risk.compute(conn, config).rows[0]
+
+    assert one.item_score == two.item_score == 0.25
+    assert one.band == two.band
+    assert two.n_incidents == 2, "the count is still reported, just not scored"
 
 
 def test_the_band_source_says_which_rule_applied(conn, make_student, config):
@@ -384,6 +423,7 @@ def test_the_kinds_are_reported_without_the_description(conn, make_student, conf
     row = risk.compute(conn, config).rows[0]
     assert row.n_incidents == 2
     assert row.incident_kinds == ("bladed", "pointed"), "sorted, so exports are stable"
+    assert row.max_severity == 4, "the worse of the two, driving the floor"
     assert "penknife" not in repr(row), "RA 10173: the description never leaves the table"
 
 
@@ -399,7 +439,7 @@ def test_an_incident_after_the_end_date_is_not_counted(conn, make_student, confi
 
 def test_a_persisted_score_records_the_incident_and_why(conn, section, make_student,
                                                         config):
-    """Without band_source a stored 'High' on a 0.06 composite looks like a bug."""
+    """Without band_source a stored High on a 0.06 composite looks like a bug."""
     a = make_student()
     record(conn, a, day(1), "present")
     incident(conn, a, severity=4)
@@ -411,3 +451,4 @@ def test_a_persisted_score_records_the_incident_and_why(conn, section, make_stud
     assert row["band"] == "High"
     assert row["band_source"] == "incident floor (severity 4)"
     assert row["composite"] < config.risk.band_low, "the band came from the floor"
+    assert row["prohibited_item_score"] == 1.0

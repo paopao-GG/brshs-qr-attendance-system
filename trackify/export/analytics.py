@@ -18,6 +18,10 @@ from datetime import datetime
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.chart import BarChart, LineChart, Reference
+from openpyxl.chart.marker import DataPoint
+from openpyxl.chart.shapes import GraphicalProperties
+from openpyxl.chart.trendline import Trendline
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
@@ -42,6 +46,11 @@ BAND_FILL = {
     "Elevated": PatternFill("solid", fgColor="FFE0B2"),
     "High": PatternFill("solid", fgColor="FFCDD2"),
 }
+# The same four colours as BAND_FILL, as plain hex for chart data points -- PatternFill
+# and GraphicalProperties.solidFill take colour strings in different wrappers, so this
+# is the one place the hex values are repeated rather than re-derived.
+BAND_COLOUR = {"Low": "E8F5E9", "Monitor": "FFF8E1",
+              "Elevated": "FFE0B2", "High": "FFCDD2"}
 
 CRITERION_LABELS = ("Absence risk", "Tardiness", "Early departure")
 
@@ -180,6 +189,7 @@ def _trend_sheet(sheet, fit) -> None:
                 "0.99 and only restates the mean.")
 
     row += 1
+    table_header_row = row
     _headers(sheet, row, ("Date", "Attendance rate"), (30, 16))
     row += 1
     for date, rate in fit.days:
@@ -189,6 +199,28 @@ def _trend_sheet(sheet, fit) -> None:
         cell.border = BOX
         cell.alignment = CENTRE
         row += 1
+    table_last_row = row - 1
+
+    # A LineChart of the same series the sheet just printed, with a native Excel
+    # trendline rather than a third written column of fitted values -- the fitted
+    # points would be numeric cells that could be read as a second, competing table,
+    # and Excel's own linear refit coincides with the OLS line for evenly-spaced x
+    # (the regression itself runs on the school-day index, not the calendar date --
+    # see trend.py). Unreachable when fit is Insufficient: this is after the guard
+    # above, so a blocked sheet gets no chart and no numeric cell, matching it exactly.
+    if table_last_row > table_header_row:
+        chart = LineChart()
+        chart.title = "Daily attendance rate"
+        chart.y_axis.numFmt = "0%"
+        chart.height, chart.width = 8, 18
+        data = Reference(sheet, min_col=2, min_row=table_header_row,
+                         max_row=table_last_row)
+        chart.add_data(data, titles_from_data=True)
+        categories = Reference(sheet, min_col=1, min_row=table_header_row + 1,
+                               max_row=table_last_row)
+        chart.set_categories(categories)
+        chart.series[0].trendline = Trendline(trendlineType="linear")
+        sheet.add_chart(chart, "D4")
 
 
 def _risk_sheet(sheet, report, config) -> None:
@@ -201,12 +233,15 @@ def _risk_sheet(sheet, report, config) -> None:
            "Risk = w_A*P(absent) + w_T*T + w_E*E, then raised to the incident floor "
            "-- recommends review, never a sanction")
 
-    # The incident columns sit immediately after Band, which keeps the band cell at
-    # column 9 for the fill below and reads in the right order: the band, then why.
     columns = ("LRN", "Student", "Section", "P(absent)", "P source", "Tardiness T",
-               "Early departure E", "Composite", "Band", "Incidents", "Kind",
-               "Max severity", "Band source", "Late", "Early", "Absent", "Days")
-    widths = (14, 30, 15, 11, 26, 12, 17, 11, 11, 10, 20, 12, 26, 7, 7, 8, 7)
+               "Early departure E", "Prohibited item I", "Composite", "Band",
+               "Incidents", "Kind", "Max severity", "Band source", "Late", "Early",
+               "Absent", "Days")
+    widths = (14, 30, 15, 11, 26, 12, 17, 15, 11, 11, 10, 20, 12, 26, 7, 7, 8, 7)
+    # The band fill below has to land on the Band column whichever position that ends
+    # up at -- computed rather than hardcoded, so the next column added here cannot
+    # silently colour the wrong cell the way column 9 used to when Band was still there.
+    band_column = columns.index("Band") + 1
     row = 4
     _headers(sheet, row, columns, widths)
     row += 1
@@ -219,6 +254,7 @@ def _risk_sheet(sheet, report, config) -> None:
         values = (entry.lrn, entry.name, entry.section,
                   round(entry.p_absent, 4), entry.p_absent_source,
                   round(entry.tardiness, 4), round(entry.early_departure, 4),
+                  round(entry.item_score, 4),
                   round(entry.composite, 4), entry.band,
                   entry.n_incidents or "", ", ".join(entry.incident_kinds),
                   entry.max_severity or "", entry.band_source,
@@ -228,13 +264,15 @@ def _risk_sheet(sheet, report, config) -> None:
             cell.border = BOX
             if index >= 3:
                 cell.alignment = CENTRE
-        sheet.cell(row, 9).fill = BAND_FILL.get(entry.band, CAUTION)
+        sheet.cell(row, band_column).fill = BAND_FILL.get(entry.band, CAUTION)
         row += 1
 
     row += 1
     counts = report.by_band()
+    totals_header_row = row
     sheet.cell(row, 1, "Band totals").font = HEAD
     row += 1
+    band_totals_first_row = row
     thresholds = (("Low", f"below {config.risk.band_low}"),
                   ("Monitor", f"{config.risk.band_low} to {config.risk.band_monitor}"),
                   ("Elevated", f"{config.risk.band_monitor} to {config.risk.band_elevated}"),
@@ -244,6 +282,72 @@ def _risk_sheet(sheet, report, config) -> None:
         sheet.cell(row, 2, counts.get(band, 0)).alignment = CENTRE
         sheet.cell(row, 3, span).font = SMALL
         row += 1
+    band_totals_last_row = row - 1
+
+    band_chart = BarChart()
+    band_chart.type = "col"
+    band_chart.title = "Students by band"
+    band_chart.legend = None
+    band_chart.height, band_chart.width = 8, 12
+    band_data = Reference(sheet, min_col=2, min_row=band_totals_first_row,
+                          max_row=band_totals_last_row)
+    band_chart.add_data(band_data)
+    band_categories = Reference(sheet, min_col=1, min_row=band_totals_first_row,
+                                max_row=band_totals_last_row)
+    band_chart.set_categories(band_categories)
+    # Same four colours as the fill on the table above (BAND_FILL), so the chart and
+    # the totals it summarises read as one figure rather than two independently
+    # coloured ones.
+    band_chart.series[0].data_points = [
+        DataPoint(idx=index, spPr=GraphicalProperties(solidFill=BAND_COLOUR[band]))
+        for index, (band, _) in enumerate(thresholds)
+    ]
+    sheet.add_chart(band_chart, get_column_letter(len(columns) + 2) + str(totals_header_row))
+
+    # The three weighted terms behind the highest composites, so the formula's own
+    # shape -- which criterion is actually carrying a given student's score -- is
+    # visible without doing the multiplication by hand. report.rows is already sorted
+    # by composite, descending (risk.compute), so this is simply the first ten.
+    # Prohibited item is deliberately NOT one of these bars: it is not a weighted
+    # contribution to the composite, so plotting it here would misstate what it is --
+    # its effect is the Band and Band source columns instead.
+    weights = report.weights
+    if weights is not None and report.rows:
+        row += 1
+        factor_header_row = row
+        factor_columns = ("Student", "Absence", "Tardiness", "Early departure")
+        _headers(sheet, row, factor_columns)
+        row += 1
+        factor_first_row = row
+        top = report.rows[:10]
+        for entry in top:
+            contributions = (
+                weights.absence * entry.p_absent,
+                weights.tardiness * entry.tardiness,
+                weights.early_departure * entry.early_departure,
+            )
+            sheet.cell(row, 1, entry.name).border = BOX
+            for offset, value in enumerate(contributions):
+                cell = sheet.cell(row, 2 + offset, round(value, 4))
+                cell.border = BOX
+                cell.alignment = CENTRE
+            row += 1
+        factor_last_row = row - 1
+
+        factor_chart = BarChart()
+        factor_chart.type = "col"
+        factor_chart.grouping = "stacked"
+        factor_chart.overlap = 100
+        factor_chart.title = "Highest-risk students: weighted contribution by factor"
+        factor_chart.height, factor_chart.width = 10, 20
+        factor_data = Reference(sheet, min_col=2, max_col=4,
+                                min_row=factor_header_row, max_row=factor_last_row)
+        factor_chart.add_data(factor_data, titles_from_data=True)
+        factor_categories = Reference(sheet, min_col=1, min_row=factor_first_row,
+                                      max_row=factor_last_row)
+        factor_chart.set_categories(factor_categories)
+        sheet.add_chart(factor_chart,
+                        get_column_letter(len(columns) + 2) + str(factor_header_row + 18))
 
     row += 1
     if config.risk.bands_set_by:
@@ -259,13 +363,17 @@ def _risk_sheet(sheet, report, config) -> None:
                     "school sets them. A boundary decides whether a real student is "
                     "referred, which is an institutional decision, not a researcher's.",
                     width=len(columns))
+
     row = _note(sheet, row,
                 "A confirmed prohibited-item incident sets a MINIMUM band by severity "
                 "(config.toml [risk.incident_floor]). It raises a band, never lowers "
                 "one, and does not change the composite -- 'Band source' says which "
                 "rule decided. It is a floor rather than a weighted criterion because "
                 "one incident saturates to 0.2212, below the 0.30 Monitor cutoff: no "
-                "weight summing to 1 with the others could raise a band on its own.",
+                "weight summing to 1 with the others could raise a band on its own, "
+                "and too few incidents occur over a short study to fit or defend a "
+                "weight in the first place. 'Prohibited item I' above (severity / 4) "
+                "is reported for context and does not enter the composite or the band.",
                 width=len(columns))
     if report.model_note:
         _note(sheet, row,
@@ -314,15 +422,14 @@ def _ahp_sheet(sheet, weights, matrix) -> None:
         cell.border = BOX
         row += 1
     sheet.cell(row, 1, "Sum").font = HEAD
-    sheet.cell(row, 2, round(weights.absence + weights.tardiness
-                             + weights.early_departure, 4)).alignment = CENTRE
+    sheet.cell(row, 2, round(sum(weights.as_dict().values()), 4)).alignment = CENTRE
     row += 2
 
     sheet.cell(row, 1, "Consistency check").font = HEAD
     row += 1
     for label, value in (("lambda max", round(weights.lambda_max, 4)),
                          ("Consistency Index", round(weights.ci, 4)),
-                         ("Random Index (n=3)", ahp.RANDOM_INDEX[weights.n]),
+                         (f"Random Index (n={weights.n})", ahp.RANDOM_INDEX[weights.n]),
                          ("Consistency Ratio", round(weights.cr, 4)),
                          ("Usable (CR <= 0.10)", "yes" if weights.consistent else "NO")):
         sheet.cell(row, 1, label)
@@ -335,8 +442,9 @@ def _ahp_sheet(sheet, weights, matrix) -> None:
                     f"Elicited from {weights.elicited_from} on {weights.elicited_at} "
                     f"(version {weights.version}).")
     row = _note(sheet, row,
-                "Three criteria, not two: a 2x2 pairwise matrix is perfectly consistent "
-                "by construction, so its consistency ratio would prove nothing.")
+                f"{len(ahp.CRITERIA)} criteria, not two: a 2x2 pairwise matrix is "
+                "perfectly consistent by construction, so its consistency ratio would "
+                "prove nothing.")
 
 
 def _screening_sheet(sheet, summary) -> None:
@@ -375,23 +483,58 @@ def _screening_sheet(sheet, summary) -> None:
         row += 1
 
     row += 1
+    category_header_row = row
     sheet.cell(row, 1, f"Incidents by category (total {summary.incident_total})").font = HEAD
     row += 1
+    category_first_row = row
     for name, count in summary.incidents_by_category.items():
         sheet.cell(row, 1, name)
         sheet.cell(row, 2, count).alignment = CENTRE
         row += 1
+    category_last_row = row - 1
 
     row += 1
+    severity_header_row = row
     sheet.cell(row, 1, "Incidents by severity").font = HEAD
     row += 1
+    severity_first_row = row
     for level, count in summary.incidents_by_severity.items():
         sheet.cell(row, 1, f"severity {level}")
         sheet.cell(row, 2, count).alignment = CENTRE
         row += 1
+    severity_last_row = row - 1
     sheet.cell(row, 1, "Severity total").font = HEAD
     sheet.cell(row, 2, summary.severity_total).alignment = CENTRE
     row += 2
+
+    # incidents_by_category and incidents_by_severity always carry every category and
+    # every level as a key, defaulted to 0 (screening.summarise) -- never an empty
+    # dict, so these ranges are always valid even before a single incident exists.
+    category_chart = BarChart()
+    category_chart.type = "bar"          # horizontal: category names read better
+    category_chart.title = "Incidents by category"
+    category_chart.legend = None
+    category_chart.height, category_chart.width = 7, 12
+    category_data = Reference(sheet, min_col=2, min_row=category_header_row,
+                              max_row=category_last_row)
+    category_chart.add_data(category_data, titles_from_data=True)
+    category_categories = Reference(sheet, min_col=1, min_row=category_first_row,
+                                    max_row=category_last_row)
+    category_chart.set_categories(category_categories)
+    sheet.add_chart(category_chart, "E4")
+
+    severity_chart = BarChart()
+    severity_chart.type = "col"          # severity is ordinal: a rising column reads
+    severity_chart.title = "Incidents by severity"
+    severity_chart.legend = None
+    severity_chart.height, severity_chart.width = 7, 12
+    severity_data = Reference(sheet, min_col=2, min_row=severity_header_row,
+                              max_row=severity_last_row)
+    severity_chart.add_data(severity_data, titles_from_data=True)
+    severity_categories = Reference(sheet, min_col=1, min_row=severity_first_row,
+                                    max_row=severity_last_row)
+    severity_chart.set_categories(severity_categories)
+    sheet.add_chart(severity_chart, "E19")
 
     sheet.cell(row, 1, f"Custody items (total {summary.custody_total})").font = HEAD
     row += 1
@@ -410,15 +553,20 @@ def _screening_sheet(sheet, summary) -> None:
         row = _note(sheet, row, text)
     row = _note(sheet, row,
                 "Incidents are NOT a weighted term in the composite. Over a short study "
-                "the count is near zero for every student, and a near-constant criterion "
-                "contributes noise, cannot be validated, and invites the question of how "
-                "its weight was derived.")
+                "the count is near zero for every student, and a near-constant "
+                "criterion contributes noise, cannot be validated, and invites the "
+                "question of how its weight was derived.")
+    row = _note(sheet, row,
+                "They are not ignored either: a confirmed incident sets a MINIMUM band "
+                "on the Risk sheet, keyed to severity. A floor rather than a weight "
+                "because one incident saturates to 0.2212 against a 0.30 Monitor "
+                "cutoff -- a weighted term could never have raised the band at all. "
+                "Counts here stay aggregate; the per-student detail is on the Risk "
+                "sheet.")
     _note(sheet, row,
-          "They are not ignored either: a confirmed incident sets a MINIMUM band on the "
-          "Risk sheet, keyed to severity. A floor rather than a weight because one "
-          "incident saturates to 0.2212 against a 0.30 Monitor cutoff -- a weighted term "
-          "could never have raised the band at all. Counts here stay aggregate; the "
-          "per-student detail is on the Risk sheet.")
+          "Category and severity only, never item_description: a record naming a minor "
+          "beside a prohibited item is sensitive personal information under RA 10173, "
+          "and this workbook gets emailed.")
 
 
 def _model_sheet(sheet, report) -> None:
@@ -500,7 +648,7 @@ def export_analytics(conn: sqlite3.Connection, config, path: str | Path, *,
     weights = report.weights or ahp.active(conn)
     matrix = ahp.matrix_of(conn, weights)
 
-    scope = "All sections"
+    scope = "All students"
     if section_id is not None:
         row = conn.execute(
             "SELECT grade_level, name FROM sections WHERE id = ?", (section_id,)

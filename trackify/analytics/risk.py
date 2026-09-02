@@ -7,6 +7,13 @@ docs/analytics-model.md sections 4, 6 and 7.
     E = 1 - exp(-nu * n_early_departure)        nu from config.toml
     Risk = w_A*P + w_T*T + w_E*E                weights from ahp.active()
 
+A confirmed prohibited-item incident does NOT enter Risk. It sets a MINIMUM band,
+keyed to severity (config.toml [risk.incident_floor]) -- see floor_for/worst_of below
+and prohibited-items.md section 9 for why a weighted fourth criterion was tried and
+rejected: it would need a pairwise judgement ("prohibited item vs. absence") that
+nobody on the real panel has actually made, over too few incidents to fit or defend a
+weight for either.
+
 Three things worth knowing before changing anything here.
 
 **Why logistic and not the linear trend.** A linear function is unbounded; asked for a
@@ -35,6 +42,7 @@ from dataclasses import dataclass, field
 
 from ..core import corrections
 from ..core.db import utcnow
+from ..core.screening import SEVERITY_MAX
 from . import ahp
 
 # Section 4's features, with "cumulative confirmed incidents" DROPPED per
@@ -70,6 +78,12 @@ class StudentRisk:
     p_absent_source: str
     tardiness: float
     early_departure: float
+    # Severity of the worst confirmed incident, scaled to [0, 1] -- descriptive only.
+    # It does NOT enter the composite or decide the band; floor_for/worst_of do that
+    # directly from max_severity below. Kept and persisted (risk_scores.
+    # prohibited_item_score) because it is real, useful context on the same 0-1 scale
+    # as everything else, not because it is weighted in.
+    item_score: float
     composite: float
     band: str
     n_late: int
@@ -151,17 +165,17 @@ def floor_for(max_severity: int, config) -> str | None:
     """The minimum band a confirmed prohibited-item incident forces, or None.
 
     A floor rather than a fourth weighted criterion, and the arithmetic is the reason.
-    One incident through the usual saturating transform is 1 - exp(-0.25) = 0.2212,
-    while Monitor starts at 0.30. Reaching Monitor on a single incident would need a
-    weight of 0.30/0.2212 = 1.356, and the weights sum to 1 -- so a student found with
-    a bladed weapon would still read "Low" no matter how the panel weighted it. Raising
-    the rate until it fires (xi >= 1.5) turns the curve into a step function, which is
-    this rule with extra arithmetic attached.
+    Run through the same saturating shape the other criteria use, one incident maps to
+    1 - exp(-0.25) = 0.2212, while Monitor starts at 0.30. Reaching Monitor on a single
+    incident would need a weight of 0.30/0.2212 = 1.356, and the weights sum to 1 -- so
+    a student found with a bladed weapon would still read "Low" no matter how the panel
+    weighted it. A weighted fourth criterion cannot express "this one event matters on
+    its own"; a floor can.
 
     prohibited-items.md section 9's objection stands and is why there is no weight
-    here: a criterion recorded once or twice in a study cannot be validated, and a
-    weight for it cannot be defended. A severity-keyed floor is a policy rule, so there
-    is no coefficient to defend in the first place.
+    here: a criterion recorded a handful of times over a short study cannot be
+    validated, and a weight for it cannot be defended. A severity-keyed floor is a
+    policy rule, so there is no coefficient to defend in the first place.
     """
     if max_severity < 1:
         return None
@@ -174,6 +188,19 @@ def worst_of(band: str, floor: str | None) -> str:
     if floor is None:
         return band
     return max(band, floor, key=BAND_ORDER.index)
+
+
+def prohibited_item(max_severity: int) -> float:
+    """The worst confirmed incident's severity, scaled to [0, 1]. Descriptive only.
+
+    0 when there is no incident. Driven by the maximum severity, not the count -- ten
+    confiscated compasses score the same as one. Does NOT enter the composite and does
+    NOT decide the band by itself -- floor_for/worst_of do that directly from
+    max_severity, using the school's severity-to-band policy rather than this ratio.
+    This exists to report "how severe was the worst thing found" on the same 0-1 scale
+    as everything else in the export, nothing more.
+    """
+    return min(max(max_severity, 0), SEVERITY_MAX) / SEVERITY_MAX
 
 
 def saturating(count: int, rate: float) -> float:
@@ -415,8 +442,12 @@ def compute(conn: sqlite3.Connection, config, *, section_id: int | None = None,
             p_absent = n_absent / len(counted) if counted else 0.0
             source = MODEL_OBSERVED
 
+        incident = incidents.get(student_id)
+        max_severity = incident["max_severity"] if incident else 0
+
         tardiness = saturating(n_late, config.risk.mu_tardiness)
         early = saturating(n_early, config.risk.nu_early_departure)
+        item = prohibited_item(max_severity)
         composite = (weights.absence * p_absent
                      + weights.tardiness * tardiness
                      + weights.early_departure * early)
@@ -424,8 +455,6 @@ def compute(conn: sqlite3.Connection, config, *, section_id: int | None = None,
         # The composite is untouched by an incident. Only the band moves, and
         # band_source records which rule decided it -- otherwise a stored "High" on a
         # low composite looks like an arithmetic error six months from now.
-        incident = incidents.get(student_id)
-        max_severity = incident["max_severity"] if incident else 0
         scored = band_for(composite, config)
         floor = floor_for(max_severity, config)
         band = worst_of(scored, floor)
@@ -437,7 +466,7 @@ def compute(conn: sqlite3.Connection, config, *, section_id: int | None = None,
             name=f"{student['last_name']}, {student['first_name']}",
             section=f"{student['grade_level']}-{student['section_name']}",
             p_absent=p_absent, p_absent_source=source,
-            tardiness=tardiness, early_departure=early,
+            tardiness=tardiness, early_departure=early, item_score=item,
             composite=composite, band=band,
             n_late=n_late, n_early=n_early, n_absent=n_absent, n_days=len(counted),
             n_incidents=incident["n"] if incident else 0,
@@ -452,12 +481,12 @@ def compute(conn: sqlite3.Connection, config, *, section_id: int | None = None,
             conn.execute(
                 """INSERT INTO risk_scores
                    (student_id, computed_at, p_absent, tardiness_score,
-                    early_departure_score, composite, band, incidents, band_source,
-                    weights_version)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    early_departure_score, prohibited_item_score, composite, band,
+                    incidents, band_source, weights_version)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (row.student_id, computed_at, row.p_absent, row.tardiness,
-                 row.early_departure, row.composite, row.band, row.n_incidents,
-                 row.band_source, weights.version),
+                 row.early_departure, row.item_score, row.composite, row.band,
+                 row.n_incidents, row.band_source, weights.version),
             )
 
     return RiskReport(rows=rows, weights=weights, model=quality,

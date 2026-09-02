@@ -5,13 +5,19 @@ departure -- weighted from pairwise expert judgement rather than numbers a resea
 picked, and checked for whether that judgement was coherent.
 
 The consistency ratio is the part usually skipped and the reason this is worth doing at
-all. It is also why there are three criteria and not two: a 2x2 pairwise matrix is
-PERFECTLY consistent by construction, CR = 0 whatever numbers go in, so the check is
-vacuous and the AHP adds nothing over picking two weights by hand.
+all. It is also why there is no two-criterion matrix: a 2x2 is PERFECTLY consistent by
+construction, CR = 0 whatever numbers go in, so the check is vacuous and the AHP adds
+nothing over picking two weights by hand.
 
 Weights come from the geometric mean of each row rather than the principal eigenvector.
 For n = 3 the two agree closely, and this one can be explained to a panel and checked on
 paper -- which matters more here than the last decimal place.
+
+Prohibited item is deliberately NOT a fourth criterion here. It was tried as one --
+weighting it would need a pairwise judgement ("prohibited item vs. absence") that nobody
+on the real panel has actually made, over an incident count too small to fit or defend a
+weight for either. prohibited-items.md section 9 has the full argument; risk.py has what
+prohibited item does instead (a severity-keyed band floor, not a weighted term).
 """
 
 from __future__ import annotations
@@ -73,6 +79,11 @@ class Weights:
     elicited_at: str = ""
     # False when these came from DOCUMENTED_MATRIX because no panel has been recorded.
     elicited: bool = False
+    # True when active() found a stored matrix sized for a DIFFERENT criteria set than
+    # the current CRITERIA (e.g. a 4x4 elicited while prohibited_item was briefly a
+    # fourth criterion) and fell back to the placeholder rather than guessing a weight.
+    # See active().
+    stale_criteria: bool = False
 
     @property
     def consistent(self) -> bool:
@@ -84,6 +95,13 @@ class Weights:
     @property
     def caveat(self) -> str:
         """What an export has to say about these weights, if anything."""
+        if self.stale_criteria:
+            return (f"PLACEHOLDER WEIGHTS - the recorded panel judged a different "
+                    f"number of criteria than the current {len(CRITERIA)} "
+                    f"({', '.join(CRITERIA)}). Their matrix cannot be reused; run a "
+                    "fresh elicitation session covering all current criteria with the "
+                    "guidance counsellor and discipline officer, then save the new "
+                    "matrix.")
         if not self.elicited:
             return ("PLACEHOLDER WEIGHTS - no panel has been elicited. These come from "
                     "the illustrative matrix in analytics-model.md section 5 and must "
@@ -124,7 +142,7 @@ def _validate(matrix) -> list[list[float]]:
 
 def derive(matrix=DOCUMENTED_MATRIX, *, elicited: bool = False,
            version: int | None = None, elicited_from: str = "",
-           elicited_at: str = "") -> Weights:
+           elicited_at: str = "", stale_criteria: bool = False) -> Weights:
     """Weights, lambda_max, CI and CR from a pairwise comparison matrix."""
     rows = _validate(matrix)
     n = len(rows)
@@ -151,6 +169,7 @@ def derive(matrix=DOCUMENTED_MATRIX, *, elicited: bool = False,
         **dict(zip(CRITERIA, weights, strict=True)),
         lambda_max=lambda_max, ci=ci, cr=cr, n=n, version=version,
         elicited_from=elicited_from, elicited_at=elicited_at, elicited=elicited,
+        stale_criteria=stale_criteria,
     )
 
 
@@ -202,6 +221,13 @@ def active(conn: sqlite3.Connection) -> Weights:
     panel has been convened. The fallback is marked `elicited = False` and carries a
     caveat, so an export can say so rather than quietly presenting an example as a
     finding.
+
+    A stored matrix sized for a different criteria set than the current CRITERIA (e.g.
+    a 4x4 elicited while prohibited_item was briefly a fourth criterion) cannot be
+    reused -- derive() would zip a 3-tuple against a 4-vector and raise. Rather than
+    guess, this falls back to the placeholder and marks it stale_criteria so the caveat
+    says a fresh elicitation is needed, instead of crashing on a database that predates
+    or postdates the change.
     """
     row = conn.execute(
         "SELECT * FROM ahp_weights WHERE active = 1 ORDER BY version DESC LIMIT 1"
@@ -209,7 +235,11 @@ def active(conn: sqlite3.Connection) -> Weights:
     if row is None:
         return derive(DOCUMENTED_MATRIX, elicited=False)
 
-    return derive(json.loads(row["matrix_json"]), elicited=True,
+    matrix = json.loads(row["matrix_json"])
+    if len(matrix) != len(CRITERIA):
+        return derive(DOCUMENTED_MATRIX, elicited=False, stale_criteria=True)
+
+    return derive(matrix, elicited=True,
                   version=row["version"], elicited_from=row["elicited_from"],
                   elicited_at=row["elicited_at"])
 

@@ -24,9 +24,19 @@ QWidget {
     font-size: 15px;
 }
 
-/* Only these paint a background. */
+/* Only these paint a background.
+ *
+ * The scan-station photo is NOT set here. It is painted by KioskWindow.paintEvent so
+ * the letterbox bars can take the photo's own edge colour -- see backdrop.py. This
+ * rule is only the fallback ground for when the image cannot be loaded at all, and
+ * backdrop.FALLBACK_GROUND carries the same value; the two have to stay in step.
+ *
+ * Stage sits over that photo. On the waiting page it is transparent and the photo is
+ * the background; on a result it is near-opaque, because the outcome colour shift is
+ * what makes a result readable across a corridor and it has to win.
+ */
 QWidget#Kiosk { background: #0E1613; }
-QWidget#Stage { background: #0E1613; }
+QWidget#Stage { background: rgba(14, 22, 19, 217); }
 
 /* Panels sitting on the stage stay see-through so the outcome colour shows. */
 QWidget#Waiting, QWidget#Result { background: transparent; }
@@ -41,11 +51,6 @@ QLabel#WaitingTitle {
     letter-spacing: -1px;
 }
 
-QLabel#WaitingHint {
-    font-size: 22px;
-    color: #7C8F89;
-}
-
 QLabel#Clock {
     font-size: 120px;
     font-weight: 300;
@@ -57,6 +62,31 @@ QLabel#ClockDate {
     font-size: 20px;
     color: #7C8F89;
     letter-spacing: 2px;
+}
+
+/* The waiting page is a LIGHT page: media/scan.jpg shows through it at full strength
+ * (see QWidget#Stage[state="waiting"]), so the light-on-dark ink the rest of the
+ * kiosk uses would be invisible on it. These are measured, not picked: contrast is
+ * against the region of the photo each widget actually sits over -- p1 = 179 for the
+ * clock and title on the right, p1 = 144 under the camera panel on the left. The
+ * muted greys that read as "secondary" on a dark ground all fail AA over this photo,
+ * which is why the small text is nearly as dark as the large.
+ *
+ * Scoped to QWidget#Waiting on purpose. ScreeningMinor in particular is shared with
+ * the inspection and screening pages, which are still dark; an unscoped override
+ * would make its label unreadable there. */
+QWidget#Waiting QLabel#Clock        { color: #0E1613; }   /* 8.8:1 over p1 179 */
+QWidget#Waiting QLabel#WaitingTitle { color: #0E1613; }   /* 8.8:1 */
+QWidget#Waiting QLabel#ClockDate    { color: #12211A; }   /* 8.0:1 */
+QWidget#Waiting QLabel#CameraHint   { color: #12211A; }   /* 5.0:1 over p1 144 */
+
+QWidget#Waiting QPushButton#ScreeningMinor {
+    color: #12211A;
+    border: 1px solid #5A6B62;
+}
+QWidget#Waiting QPushButton#ScreeningMinor:hover {
+    color: #0E1613;
+    border-color: #2C3A34;
 }
 
 /* --- result state ----------------------------------------------------- */
@@ -111,16 +141,31 @@ QLabel#TimeText {
 /* Outcome colours. Set via the Stage widget's dynamic "state" property so the whole
  * screen shifts, not just the text -- readable across a corridor at a glance. */
 
-QWidget#Stage[state="in"]        { background: #0C2A1E; }
-QWidget#Stage[state="out"]       { background: #0B2233; }
-QWidget#Stage[state="already"]   { background: #2E2408; }
-QWidget#Stage[state="unknown"]   { background: #33130F; }
-QWidget#Stage[state="override"]  { background: #2E2408; }
-QWidget#Stage[state="neutral"]   { background: #171F1C; }
+/* rgba, not solid hex, and two different alphas on purpose.
+ *
+ * An OUTCOME floods the screen at 217/255. That is close to opaque, and deliberately:
+ * a result has to read across a corridor, so its colour has to win over the photo
+ * underneath rather than compete with it.
+ *
+ * The WAITING page is transparent -- see its own rule below.
+ *
+ * inspect and records stay heavy for a different reason: both are dense working
+ * screens -- a form, a table -- and a photograph behind small text is noise. */
+QWidget#Stage[state="in"]        { background: rgba(12, 42, 30, 217); }
+QWidget#Stage[state="out"]       { background: rgba(11, 34, 51, 217); }
+QWidget#Stage[state="already"]   { background: rgba(46, 36, 8, 217); }
+QWidget#Stage[state="unknown"]   { background: rgba(51, 19, 15, 217); }
+QWidget#Stage[state="override"]  { background: rgba(46, 36, 8, 217); }
+QWidget#Stage[state="neutral"]   { background: rgba(23, 31, 28, 217); }
+/* Fully transparent, so media/scan.jpg shows at full strength -- this is the one
+   screen that is a light page. Its labels are re-inked below. Deliberately NOT the
+   same state as "neutral" above: the result view still uses that one for MISFIRE,
+   NO_CLASSES and RATE_LIMITED, which keep light text and so need an opaque ground. */
+QWidget#Stage[state="waiting"]   { background: transparent; }
 /* A ground that says "different mode", not one that implies an outcome --
    nothing has been decided yet when this page is up. */
-QWidget#Stage[state="inspect"]   { background: #12161F; }
-QWidget#Stage[state="records"]   { background: #10161A; }
+QWidget#Stage[state="inspect"]   { background: rgba(18, 22, 31, 217); }
+QWidget#Stage[state="records"]   { background: rgba(16, 22, 26, 217); }
 
 QLabel#Headline[state="in"]       { color: #4ADE80; }
 QLabel#Headline[state="out"]      { color: #58B6F5; }

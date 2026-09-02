@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 from qtpy.QtCore import QSize, Qt, QTimer, Slot
-from qtpy.QtGui import QPainter, QPainterPath, QPixmap
+from qtpy.QtGui import QColor, QPainter, QPainterPath, QPixmap
 from qtpy.QtWidgets import (
     QDialog,
     QFrame,
@@ -42,7 +42,7 @@ from ..core.screening import Outcome as ScreeningOutcome
 from ..core.security import AttemptGate
 from ..core.service import Presentation, ScanPresentation, ScanService
 from ..notify.limits import TokenBucket
-from . import icons
+from . import backdrop, icons
 from .camera import CameraPanel
 from .records import PasswordDialog, RecordsPage
 from .screening import CustodyDialog, IncidentDialog
@@ -192,7 +192,12 @@ class KioskWindow(QWidget):
 
         self.stage = QWidget()
         self.stage.setObjectName("Stage")
-        self.stage.setProperty("state", "neutral")
+        # "waiting", not "neutral": the waiting page is the one screen that lets the
+        # backdrop photo through at full strength, and "neutral" is still used by the
+        # RESULT view for MISFIRE / NO_CLASSES / RATE_LIMITED (see STATE_STYLE), which
+        # keep an opaque ground and light text. Collapsing the two would put light
+        # text on a light photograph.
+        self.stage.setProperty("state", "waiting")
         self.stage.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         root.addWidget(self.stage, 1)
 
@@ -879,7 +884,7 @@ class KioskWindow(QWidget):
         )
 
     def _show_waiting(self) -> None:
-        self.stage.setProperty("state", "neutral")
+        self.stage.setProperty("state", "waiting")
         _restyle(self.stage)
         self.inspection.hide()
         self.records.hide()
@@ -1022,6 +1027,28 @@ class KioskWindow(QWidget):
         self.status_camera.setToolTip(message)
         self.status_camera.setProperty("alert", "true" if state == "error" else "false")
         _restyle(self.status_camera)
+
+    def paintEvent(self, event) -> None:
+        """Ground, then the scan-station backdrop centred on it.
+
+        Painted here rather than set as a QSS border-image so the letterbox bars can
+        be the photo's own edge colour -- a dark bar either side of a light photograph
+        reads as a broken frame. backdrop.py samples it. Overriding paintEvent means
+        the stylesheet's own background is no longer drawn for this widget, which is
+        why the ground is filled explicitly.
+
+        What sits over this decides how much of it shows: the waiting page is
+        transparent and lets the photo through at full strength, an outcome floods it
+        with its colour.
+        """
+        painter = QPainter(self)
+        photo = backdrop.backdrop(self.width(), self.height())
+        painter.fillRect(self.rect(),
+                         backdrop.ground() if photo is not None
+                         else QColor(backdrop.FALLBACK_GROUND))
+        if photo is not None:
+            painter.drawPixmap((self.width() - photo.width()) // 2,
+                               (self.height() - photo.height()) // 2, photo)
 
     def closeEvent(self, event) -> None:
         # Stop the clock before the camera: the tick reads the database, and on
